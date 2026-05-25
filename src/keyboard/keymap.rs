@@ -105,7 +105,7 @@ pub const KC_RGUI: u16  = 0x00E7;
 // Layer toggle
 pub const MO: u16 = 0x5C20;
 pub fn mo_layer(kc: u16) -> Option<usize> {
-    if kc & 0xFF00 == MO & 0xFF00 { Some((kc & 0x0F) as usize) } else { None }
+    if kc & 0xFFF0 == MO { Some((kc & 0x0F) as usize) } else { None }
 }
 
 // ═══════════════════════════════════════════════════════════════════

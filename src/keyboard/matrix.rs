@@ -202,12 +202,23 @@ impl Matrix {
     }
 
     /// Jump to STM32F0 ROM bootloader (0x1FFF_C800).
-    /// Never returns — triggers a system reset into DFU mode.
+    /// Direct jump — sys_reset would clear SYSCFG.MEM_MODE before it takes effect.
     pub unsafe fn enter_bootloader() -> ! {
-        // Set MEM_MODE to boot from system memory
+        cortex_m::interrupt::disable();
+        // Disable SysTick
+        (0xE000_E010 as *mut u32).write_volatile(0);
+
+        // Enable SYSCFG clock (APB2ENR bit 0)
+        let rcc = &*stm32f0xx_hal::pac::RCC::ptr();
+        rcc.apb2enr.modify(|_, w| w.syscfgen().set_bit());
+
+        // Remap system memory to address 0
         let syscfg = &*stm32f0xx_hal::pac::SYSCFG::ptr();
         syscfg.cfgr1.modify(|_, w| w.mem_mode().bits(0x01));
-        // Trigger system reset
-        cortex_m::peripheral::SCB::sys_reset();
+
+        let base = 0x1FFF_C800 as *const u32;
+        let sp = base.read_volatile();
+        let entry = base.add(1).read_volatile();
+        cortex_m::asm::bootstrap(sp as *const u32, entry as *const u32);
     }
 }

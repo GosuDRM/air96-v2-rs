@@ -450,9 +450,17 @@ fn main() -> ! {
 
     // ── IS31FL3733 init ─────────────────────────────────────────────
     for &addr in &[0x50u8, 0x53u8] {
+        // Function registers (page 3)
         let _ = i2c.write(addr, &[0xFD, 0x03]);
-        let _ = i2c.write(addr, &[0x0A, 0x01]);
-        let _ = i2c.write(addr, &[0x00, 0x01]);
+        let _ = i2c.write(addr, &[0x00, 0x01]); // config: normal operation
+        let _ = i2c.write(addr, &[0x01, 0xFF]); // GCC: max current
+        let _ = i2c.write(addr, &[0x0E, 0x01]); // SW pull-up
+        let _ = i2c.write(addr, &[0x0F, 0x01]); // CS pull-down
+        // LED on/off (page 0) — enable all channels
+        let _ = i2c.write(addr, &[0xFD, 0x00]);
+        for reg in 0x00u8..0x18 {
+            let _ = i2c.write(addr, &[reg, 0xFF]);
+        }
     }
 
     // ── USB HID (wired mode) ────────────────────────────────────────
@@ -795,6 +803,10 @@ fn main() -> ! {
 
         // ── Side LED update ─────────────────────────────────────────
         dev.side.update(&dev.proto, 1, false);
+        for i in 0..10 {
+            let [r, g, b] = dev.side.output[i];
+            dev.rgb.set_color(100 + i, r, g, b);
+        }
 
         // ── BAT_NUM ──────────────────────────────────────────────────
         if dev.bat_num_show {

@@ -1,5 +1,16 @@
 # Changelog
 
+## v3.0.2 (2026-05-26)
+
+Critical firmware fixes — custom keycodes, DFU, RGB, and side LEDs were all non-functional.
+
+### Fixed
+
+- **`mo_layer()` mask too broad** — Checked `kc & 0xFF00 == 0x5C00`, which matched ALL custom keycodes (0x5C00–0x5CFF) as layer toggles. Every media key, link switch, side/RGB control, and Mac function key was silently swallowed. Fixed mask to `kc & 0xFFF0 == 0x5C20` (only MO keycodes 0x5C20–0x5C2F).
+- **DFU entry never worked** — `enter_bootloader()` set SYSCFG MEM_MODE then called `sys_reset()`, which clears SYSCFG registers before the remap takes effect. Also SYSCFG clock was never enabled. Fixed: enable SYSCFG clock, remap system memory, direct jump via `cortex_m::asm::bootstrap()`.
+- **IS31FL3733 init incomplete** — Global Current Control (reg 0x01) was never set (defaults to 0 = zero LED current) and LED on/off registers (page 0) were never enabled. Also wrote to reserved register 0x0A. Fixed: full init with GCC=0xFF, SW pull-up, CS pull-down, and all channels enabled.
+- **Side LED output disconnected** — `SideLeds::update()` computed animations into its own buffer but never copied to the RGB matrix (indices 100–109). Side LEDs were always dark.
+
 ## v3.0.1 (2026-05-25)
 
 Cortex-M0+ hardware fixes after on-device flash test.
