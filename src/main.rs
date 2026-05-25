@@ -72,6 +72,7 @@ struct Device {
     f_sys_show: bool,
     f_sleep_show: bool,
     f_bat_hold: bool,
+    dfu_hold_ticks: u16,
     sleep_enabled: bool,
     bat_num_show: bool,
     // ── Non-blocking state machines ────────────────────────────
@@ -104,6 +105,7 @@ impl Device {
             dev_reset_press: false, dev_reset_press_delay: 0,
             rgb_test_press: false, rgb_test_press_delay: 0,
             f_sys_show: false, f_sleep_show: false, f_bat_hold: false,
+            dfu_hold_ticks: 0,
             sleep_enabled: true, bat_num_show: false,
             reset_blink_phase: 0, reset_blink_timer: 0,
             rgb_test_phase: 0, rgb_test_timer: 0,
@@ -551,6 +553,20 @@ fn main() -> ! {
         let events = dev.matrix.scan();
         for ev in &events {
             dev.process_key_event(ev.row, ev.col, ev.pressed);
+        }
+
+        // ── DFU entry: hold Escape alone (no other keys) for 3 seconds ──
+        {
+            let esc = dev.current_keys.contains(&0x29u8);
+            let other = dev.current_keys.iter().any(|&k| k != 0 && k != 0x29);
+            if esc && !other {
+                dev.dfu_hold_ticks = dev.dfu_hold_ticks.saturating_add(1);
+                if dev.dfu_hold_ticks >= 3000 {
+                    unsafe { keyboard::matrix::Matrix::enter_bootloader(); }
+                }
+            } else {
+                dev.dfu_hold_ticks = 0;
+            }
         }
         if events.len() > 0 {
             if dev.proto.link_mode == LinkMode::Usb {
