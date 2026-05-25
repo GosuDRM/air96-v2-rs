@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.8.5 (2026-05-26)
+
+Fixed the DFU bootloader jump logic.
+
+### Fixed
+
+- **DFU Bootloader Interrupts & Pointers** — Added a `cpsie i` instruction to re-enable interrupts globally right before the jump to the bootloader, ensuring its USB interrupts can execute and enumerate. Also replaced UB-prone null/dangling pointer reads with explicit raw memory reads for the bootloader's initial SP and Reset Vector.
+
 ## v3.8.4 (2026-05-26)
 
 Fixed the 64ms minimum keystroke latency limit by increasing the USB polling rate.

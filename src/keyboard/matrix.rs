@@ -266,7 +266,7 @@ impl Matrix {
     /// Disables all NVIC interrupts, clears pending flags, resets SysTick,
     /// points VTOR to system memory (0x1FFF_C800), sets MSP and jumps.
     /// Must only be called from check_dfu_magic_and_jump() at boot.
-    #[allow(asm_sub_register)]
+    #[allow(asm_sub_register, clippy::zero_ptr, clippy::manual_dangling_ptr)]
     #[cfg(all(target_arch = "arm", not(test)))]
     pub unsafe fn jump_to_bootloader() -> ! {
         // Disable interrupts globally
@@ -303,11 +303,13 @@ impl Matrix {
         cortex_m::asm::isb();
 
         // Load bootloader's initial SP and reset vector (from remapped 0x0000_0000)
-        let sp = core::ptr::read_volatile(core::ptr::null::<u32>());
-        let rv = core::ptr::read_volatile(core::ptr::dangling::<u32>());
+        let sp = core::ptr::read_volatile(0x0000_0000 as *const u32);
+        let rv = core::ptr::read_volatile(0x0000_0004 as *const u32);
 
-        // Set MSP then jump — never returns
+        // Re-enable interrupts globally (cpsie i) so that the bootloader can handle USB events,
+        // set MSP, and jump to the reset handler.
         core::arch::asm!(
+            "cpsie i",
             "msr MSP, {sp}",
             "bx {rv}",
             sp = in(reg) sp,
