@@ -385,6 +385,13 @@ fn main() -> ! {
     // GPIOD needed for matrix column D2 (pin 42 on 48-pin package)
     let _gpiod = dp.GPIOD.split(&mut rcc);
 
+    // ── DFU entry check — hold Escape while plugging in USB ──────────
+    // Must happen before any hardware init that could hang without DFU escape.
+    unsafe { keyboard::matrix::Matrix::init_pins(); }
+    if unsafe { keyboard::matrix::Matrix::check_escape_held() } {
+        unsafe { keyboard::matrix::Matrix::enter_bootloader(); }
+    }
+
     let (mut dc_boost, mut rgb_sdb1, mut rgb_sdb2, mut nrf_wakeup, mut nrf_reset, _nrf_boot, dev_mode, sys_mode) =
         cortex_m::interrupt::free(|cs| {
             let dc   = gpioc.pc2.into_push_pull_output(cs);

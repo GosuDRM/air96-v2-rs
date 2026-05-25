@@ -187,4 +187,27 @@ impl Matrix {
 
         events
     }
+
+    /// Check if Escape key (row 0, col 0) is held — for DFU entry.
+    /// Call after `init_pins()`.
+    pub unsafe fn check_escape_held() -> bool {
+        let row = &ROW_PINS[0]; // C14 = row 0
+        let col = &COL_PINS[0]; // A4 = col 0
+        set_pin_low(row);
+        // Small delay for signal to settle
+        core::ptr::read_volatile(0xE000_E010 as *const u32);
+        let pressed = !read_pin(col);
+        set_pin_high(row);
+        pressed
+    }
+
+    /// Jump to STM32F0 ROM bootloader (0x1FFF_C800).
+    /// Never returns — triggers a system reset into DFU mode.
+    pub unsafe fn enter_bootloader() -> ! {
+        // Set MEM_MODE to boot from system memory
+        let syscfg = &*stm32f0xx_hal::pac::SYSCFG::ptr();
+        syscfg.cfgr1.modify(|_, w| w.mem_mode().bits(0x01));
+        // Trigger system reset
+        cortex_m::peripheral::SCB::sys_reset();
+    }
 }

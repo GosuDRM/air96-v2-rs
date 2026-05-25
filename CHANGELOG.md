@@ -10,7 +10,8 @@ Cortex-M0+ hardware fixes after on-device flash test.
 - **`cortex_m::asm::delay()` no-op on Cortex-M0+** — The DWT cycle counter isn't available on armv6m without manual `DEMCR.TRCENA` bit set. `delay()` returned immediately, silently breaking:
   - NRF wakeup timing in `uart_flush!` (50µs + len×32µs hold time)
   - Matrix scan signal-settling delay after driving row low
-  Replaced both with `core::ptr::read_volatile(0xE000_E010 as *const u32)` — reads SYST_CSR register as compiler-proof busy-wait.
+  Replaced both with `core::ptr::read_volatile(0xE000_E010 as *const u32)` — reads SYST_CSR as compiler-proof busy-wait.
+- **DFU entry hook** — Hold Escape while plugging in USB to enter ROM bootloader (`0483:DF11`). Uses SYSCFG MEM_MODE + system reset. Prevents soft-brick when firmware has issues.
 
 ## v3.0.0 (2026-05-25)
 
