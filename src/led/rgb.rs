@@ -188,8 +188,8 @@ impl RgbMatrix {
             mode: 0,
             hue: 255,
             sat: 255,
-            val: 128,
-            speed: 128,
+            val: 223,  // QMK default: 255 - VAL_STEP*2 = 223
+            speed: 223, // QMK default: 255 - SPD_STEP*2 = 223
             enabled: true,
             suspended: false,
         }
