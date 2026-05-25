@@ -1,6 +1,6 @@
 [package]
 name = "air96-v2"
-version = "3.0.5"
+version = "3.1.0"
 edition = "2021"
 authors = ["GosuDRM"]
 description = "Air96 V2 wireless keyboard firmware — Rust rewrite (embassy-rs)"
