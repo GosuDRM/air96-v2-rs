@@ -1,5 +1,17 @@
 # Changelog
 
+## v3.8.3 (2026-05-26)
+
+Fixed microsecond keystroke stuttering/stalls when rapid key spamming, and resolved wireless mode UART packet receiving issues.
+
+### Fixed
+
+- **USB Report Collisions** — Changed report dispatching to only send either NKRO or standard boot keyboard reports (instead of both concurrently) when a key event occurs, avoiding endpoint congestion, `WouldBlock` drop-outs, and host-side input device de-synchronization.
+- **I2C Typing Deferral** — Added a 20ms continuous idle check before performing RGB matrix I2C flushes (`pwm_flush!`), preventing the 3.5ms blocking I2C operations from stalling the CPU during active typing/key-spamming gaps.
+- **Side LED Update Speed** — Moved the side LED update tick check inside the 1ms timing block to prevent it from spinning out of control under high-speed continuous matrix scanning.
+- **UART RX Framing** — Implemented an idle-line gap detection timeout (2ms) for the UART receiver instead of resetting the frame parser immediately on USART read blockages, restoring full packet parsing capabilities in wireless mode.
+- **Clippy Cleanups** — Resolved warnings related to saturating arithmetic for RGB speed/value increments and use of `.is_empty()` for length comparisons.
+
 ## v3.8.2 (2026-05-26)
 
 Optimized keypress scanning latency and resolved host-side test compilation issues.

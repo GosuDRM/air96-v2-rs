@@ -225,8 +225,8 @@ impl Device {
 
             // ── RGB matrix controls ────────────────────────────────────
             keymap::KC_RGB_SPD => if pressed { self.rgb.speed = self.rgb.speed.saturating_sub(16); },
-            keymap::KC_RGB_SPI => if pressed { self.rgb.speed = (self.rgb.speed + 16).min(255); },
-            keymap::KC_RGB_VAI => if pressed { self.rgb.val = (self.rgb.val + 16).min(255); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } },
+            keymap::KC_RGB_SPI => if pressed { self.rgb.speed = self.rgb.speed.saturating_add(16); },
+            keymap::KC_RGB_VAI => if pressed { self.rgb.val = self.rgb.val.saturating_add(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } },
             keymap::KC_RGB_VAD => if pressed { self.rgb.val = self.rgb.val.saturating_sub(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } },
             keymap::KC_RGB_MOD => if pressed { self.rgb.next_mode(); },
             keymap::KC_RGB_HUI => if pressed { self.rgb.hue = self.rgb.hue.wrapping_add(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } },
@@ -707,6 +707,8 @@ fn main() -> ! {
     let mut rgb_anim_timer: u32 = 0;
     let mut t50: u32 = 0;
     let mut periodic_timer = 0u16;
+    let mut idle_timer = 0u32;
+    let mut rx_idle_ticks: u32 = 0;
 
     loop {
         let tick = tick_arrived();
@@ -719,13 +721,13 @@ fn main() -> ! {
 
         if !events.is_empty() {
             if dev.proto.link_mode == LinkMode::Usb {
-                // Wired mode: send keyboard + consumer + system via USB HID
-                // Send BOTH report IDs — combined descriptor creates two input
-                // devices on Linux; both must agree on key state.
-                usb_hid.send_keyboard(dev.current_mods, &dev.current_keys);
+                // Wired mode: send either NKRO or standard keyboard report, not both,
+                // to prevent endpoint collision and packet dropping.
                 if dev.nkro_enabled {
                     let bits = dev.get_nkro_bitmap();
                     usb_hid.send_nkro(dev.current_mods, &bits);
+                } else {
+                    usb_hid.send_keyboard(dev.current_mods, &dev.current_keys);
                 }
                 if dev.pending_consumer_usb != 0 {
                     usb_hid.send_consumer(dev.pending_consumer_usb);
@@ -752,6 +754,24 @@ fn main() -> ! {
         // ── 1ms Timing-Dependent Logic ──────────────────────────────
         if tick {
             dev.matrix.tick_debounce();
+
+            // Track continuous idle time in milliseconds
+            if dev.current_keys.iter().all(|&k| k == 0) {
+                idle_timer = idle_timer.saturating_add(1);
+            } else {
+                idle_timer = 0;
+            }
+
+            // UART RX idle gap detection: call rx_finish after 2ms of no bytes
+            if dev.proto.rx_len > 0 {
+                rx_idle_ticks += 1;
+                if rx_idle_ticks >= 2 {
+                    let _ = dev.proto.rx_finish();
+                    rx_idle_ticks = 0;
+                }
+            } else {
+                rx_idle_ticks = 0;
+            }
 
             // ── DFU entry: hold Escape alone (no other keys) for 3 seconds ──
             {
@@ -1020,12 +1040,14 @@ fn main() -> ! {
             }
         }
 
-        // ── Side LED update ─────────────────────────────────────────
-        let caps_lock = (keyboard_leds & 0x02) != 0;
-        dev.side.update(&dev.proto, 1, caps_lock);
-        for i in 0..10 {
-            let [r, g, b] = dev.side.output[i];
-            dev.rgb.set_color(100 + i, r, g, b);
+        // ── Side LED update (run every 1ms tick) ─────────────────────
+        if tick {
+            let caps_lock = (keyboard_leds & 0x02) != 0;
+            dev.side.update(&dev.proto, 1, caps_lock);
+            for i in 0..10 {
+                let [r, g, b] = dev.side.output[i];
+                dev.rgb.set_color(100 + i, r, g, b);
+            }
         }
 
         // ── RGB animation tick (every ~20ms) ─────────────────────────
@@ -1066,14 +1088,14 @@ fn main() -> ! {
         if tick {
             rgb_flush_timer += 1;
         }
-        let idle = events.is_empty() && dev.current_keys.iter().all(|&k| k == 0);
+        let idle = idle_timer >= 20 && events.is_empty() && dev.current_keys.iter().all(|&k| k == 0);
         if dev.rgb.needs_flush() && rgb_flush_timer >= 10 && idle {
             rgb_flush_timer = 0;
             pwm_flush!(&mut dev.rgb, i2c);
         }
 
         // ── Deferred EEPROM save (only when idle, no events) ──────────
-        if dev.save_pending && events.len() == 0 {
+        if dev.save_pending && events.is_empty() {
             dev.save_pending = false;
             let cfg = UserConfig {
                 side_mode: dev.side.mode,
@@ -1087,21 +1109,22 @@ fn main() -> ! {
         }
 
         // ── Periodic sender (every 200ms) ────────────────────────────
-        periodic_timer += 1;
-        if periodic_timer >= 200 && dev.proto.link_mode != LinkMode::Usb {
-            periodic_timer = 0;
-            if dev.sleep.no_act_time <= 2000 {
-                let report = dev.proto.bytekb_report_buf;
-                dev.proto.build_report(wireless::uart::CMD_RPT_BYTE_KB, &report, 8);
-                uart_flush!(&dev.proto);
+        if tick {
+            periodic_timer += 1;
+            if periodic_timer >= 200 && dev.proto.link_mode != LinkMode::Usb {
+                periodic_timer = 0;
+                if dev.sleep.no_act_time <= 2000 {
+                    let report = dev.proto.bytekb_report_buf;
+                    dev.proto.build_report(wireless::uart::CMD_RPT_BYTE_KB, &report, 8);
+                    uart_flush!(&dev.proto);
+                }
             }
         }
 
-        // ── UART RX ─────────────────────────────────────────────────
-        if let Ok(byte) = serial.read() {
+        // ── UART RX (drain all available bytes immediately) ──────────
+        while let Ok(byte) = serial.read() {
             dev.proto.rx_queue_byte(byte);
-        } else {
-            let _ = dev.proto.rx_finish();
+            rx_idle_ticks = 0;
         }
     }
 }
