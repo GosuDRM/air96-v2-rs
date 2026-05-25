@@ -213,24 +213,32 @@ impl Matrix {
         true
     }
 
-    /// Jump to STM32F0 ROM bootloader (0x1FFF_C800).
-    /// Direct jump — sys_reset would clear SYSCFG.MEM_MODE before it takes effect.
+    /// Enter STM32 DFU mode by erasing flash page 0 (vector table) then
+    /// resetting. The ROM bootloader sees no valid firmware and stays in
+    /// USB DFU (0483:DF11). Erase runs from RAM so we don't saw off the
+    /// branch we're sitting on.
     pub unsafe fn enter_bootloader() -> ! {
         cortex_m::interrupt::disable();
-        // Disable SysTick
         (0xE000_E010 as *mut u32).write_volatile(0);
-
-        // Enable SYSCFG clock (APB2ENR bit 0)
-        let rcc = &*stm32f0xx_hal::pac::RCC::ptr();
-        rcc.apb2enr.modify(|_, w| w.syscfgen().set_bit());
-
-        // Remap system memory to address 0
-        let syscfg = &*stm32f0xx_hal::pac::SYSCFG::ptr();
-        syscfg.cfgr1.modify(|_, w| w.mem_mode().bits(0x01));
-
-        let base = 0x1FFF_C800 as *const u32;
-        let sp = base.read_volatile();
-        let entry = base.add(1).read_volatile();
-        cortex_m::asm::bootstrap(sp as *const u32, entry as *const u32);
+        erase_page0_and_reset()
     }
+}
+
+/// Erases flash page 0 then resets. Placed in `.data` (copied to RAM at
+/// startup) so the CPU keeps fetching instructions while flash is busy.
+#[link_section = ".data"]
+#[inline(never)]
+unsafe fn erase_page0_and_reset() -> ! {
+    let keyr = 0x4002_2004 as *mut u32;
+    let sr   = 0x4002_200C as *const u32;
+    let cr   = 0x4002_2010 as *mut u32;
+    let ar   = 0x4002_2014 as *mut u32;
+    keyr.write_volatile(0x4567_0123);
+    keyr.write_volatile(0xCDEF_89AB);
+    cr.write_volatile(cr.read_volatile() | (1 << 1));
+    ar.write_volatile(0x0800_0000);
+    cr.write_volatile(cr.read_volatile() | (1 << 6));
+    while sr.read_volatile() & 1 != 0 {}
+    (0xE000_ED0C as *mut u32).write_volatile(0x05FA_0004);
+    loop { cortex_m::asm::nop() }
 }
