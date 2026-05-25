@@ -937,9 +937,10 @@ fn main() -> ! {
             dev.side.show_sleep(dev.sleep_enabled);
         }
 
-        // ── RGB matrix I2C flush (throttled to every 10 ms for latency) ──
+        // ── RGB matrix I2C flush (only when idle — never block keystrokes) ──
         rgb_flush_timer += 1;
-        if dev.rgb.needs_flush() && rgb_flush_timer >= 10 {
+        let idle = events.len() == 0 && dev.current_keys.iter().all(|&k| k == 0);
+        if dev.rgb.needs_flush() && rgb_flush_timer >= 10 && idle {
             rgb_flush_timer = 0;
             pwm_flush!(&mut dev.rgb, i2c);
         }

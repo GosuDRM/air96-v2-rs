@@ -165,8 +165,7 @@ impl Matrix {
                 if debounced_bit != pressed {
                     let ctr = &mut self.counters[row_idx][col_idx];
                     *ctr += 1;
-                    if *ctr >= 5 {
-                        // 5ms debounce
+                    if *ctr >= 2 {  // 2ms debounce (QMK eager-style, low latency)
                         *ctr = 0;
                         if pressed {
                             self.debounced[byte_idx] |= bit_mask;
