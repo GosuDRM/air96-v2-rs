@@ -497,33 +497,26 @@ fn nkro_bitmap_generation_logic() {
     let current_keys = [0x04, 0x29, 0x1E, 0, 0, 0]; // 'A' (4), 'Esc' (41), '1' (30)
     
     let mut bits = [0u8; 32];
-    if current_mods & 0x01 != 0 { bits[0] |= 0x01; }
-    if current_mods & 0x02 != 0 { bits[0] |= 0x02; }
-    if current_mods & 0x04 != 0 { bits[0] |= 0x04; }
-    if current_mods & 0x08 != 0 { bits[0] |= 0x08; }
-    if current_mods & 0x10 != 0 { bits[0] |= 0x10; }
-    if current_mods & 0x20 != 0 { bits[0] |= 0x20; }
-    if current_mods & 0x40 != 0 { bits[0] |= 0x40; }
-    if current_mods & 0x80 != 0 { bits[0] |= 0x80; }
-    
+    // Note: modifiers intentionally NOT in bitmap — they're in the separate modifier byte
     for &k in &current_keys {
         if k > 0 && k < 248 {
-            let byte = (k as usize / 8) + 1;
+            let byte = k as usize / 8;
             let bit = k as usize % 8;
             bits[byte] |= 1 << bit;
         }
     }
     
-    // Verify modifiers
-    assert_eq!(bits[0], 0x05);
+    // Verify no modifier bits leaked into bits[0] — modifiers are in separate byte
+    assert_eq!(bits[0] & 0x0F, 0x00);  // bits 0-3 (Left Ctrl/Shift/Alt/GUI) must be clear
+    // bits[4] is keycode 4 ('a') — that's correct, not a modifier
     
-    // Verify keycode 4 ('A') -> byte = 4/8 + 1 = 1, bit = 4%8 = 4. bits[1] should have bit 4 set.
-    assert_ne!(bits[1] & (1 << 4), 0);
+    // Verify keycode 4 ('A') -> byte = 0, bit = 4. bits[0] should have bit 4 set.
+    assert_ne!(bits[0] & (1 << 4), 0);
     
-    // Verify keycode 30 ('1') -> byte = 30/8 + 1 = 4, bit = 30%8 = 6. bits[4] should have bit 6 set.
-    assert_ne!(bits[4] & (1 << 6), 0);
+    // Verify keycode 30 ('1') -> byte = 3, bit = 6. bits[3] should have bit 6 set.
+    assert_ne!(bits[3] & (1 << 6), 0);
     
-    // Verify keycode 41 ('Esc') -> byte = 41/8 + 1 = 6, bit = 41%8 = 1. bits[6] should have bit 1 set.
-    assert_ne!(bits[6] & (1 << 1), 0);
+    // Verify keycode 41 ('Esc') -> byte = 5, bit = 1. bits[5] should have bit 1 set.
+    assert_ne!(bits[5] & (1 << 1), 0);
 }
 

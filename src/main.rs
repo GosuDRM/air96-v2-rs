@@ -138,17 +138,11 @@ impl Device {
 
     fn get_nkro_bitmap(&self) -> [u8; 32] {
         let mut bits = [0u8; 32];
-        if self.current_mods & 0x01 != 0 { bits[0] |= 0x01; } // Left Ctrl
-        if self.current_mods & 0x02 != 0 { bits[0] |= 0x02; } // Left Shift
-        if self.current_mods & 0x04 != 0 { bits[0] |= 0x04; } // Left Alt
-        if self.current_mods & 0x08 != 0 { bits[0] |= 0x08; } // Left GUI
-        if self.current_mods & 0x10 != 0 { bits[0] |= 0x10; } // Right Ctrl
-        if self.current_mods & 0x20 != 0 { bits[0] |= 0x20; } // Right Shift
-        if self.current_mods & 0x40 != 0 { bits[0] |= 0x40; } // Right Alt
-        if self.current_mods & 0x80 != 0 { bits[0] |= 0x80; } // Right GUI
+        // Note: bits[0] intentionally zeroed — modifiers are already in the
+        // separate modifier byte of the NKRO report (report[1]).
         for &k in &self.current_keys {
             if k > 0 && k < 248 {
-                let byte = (k as usize / 8) + 1;
+                let byte = k as usize / 8;
                 let bit = k as usize % 8;
                 bits[byte] |= 1 << bit;
             }
