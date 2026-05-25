@@ -116,13 +116,13 @@ pub struct UsbHid<'a> {
 
 impl<'a> UsbHid<'a> {
     pub fn new(bus: &'a UsbBusAllocator<UsbBusType>) -> Self {
-        let keyboard = HIDClass::new(bus, COMBINED_KEYBOARD_DESC, 64);
+        let keyboard = HIDClass::new(bus, COMBINED_KEYBOARD_DESC, 1);
         let consumer = HIDClass::new(bus, MediaKeyboardReport::desc(), 8);
         let system  = HIDClass::new(bus, SystemControlReport16::desc(), 8);
         let device = UsbDeviceBuilder::new(bus, UsbVidPid(USB_VID, USB_PID))
             .manufacturer("GosuDRM")
             .product("Air96 V2 Keyboard")
-            .serial_number("v3.8.3")
+            .serial_number("v3.8.4")
             .device_class(0x00)
             .device_sub_class(0x00)
             .device_protocol(0x00)

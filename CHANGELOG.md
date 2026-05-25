@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.8.4 (2026-05-26)
+
+Fixed the 64ms minimum keystroke latency limit by increasing the USB polling rate.
+
+### Changed
+
+- **1000Hz USB Polling Rate** — Changed the USB HID keyboard endpoint polling interval from `64ms` to `1ms`. This allows the host to request reports at a 1000Hz frequency, reducing the minimum registered keypress duration from 64ms down to under 1ms.
+
 ## v3.8.3 (2026-05-26)
 
 Fixed microsecond keystroke stuttering/stalls when rapid key spamming, and resolved wireless mode UART packet receiving issues.
