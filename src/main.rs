@@ -59,6 +59,8 @@ struct Device {
     rgb: RgbMatrix,
     active_layers: [usize; 4],
     active_layer_count: usize,
+    /// Keycode tracking: store keycode on press so release uses same code regardless of layer state
+    keycode_track: [[u16; 21]; 6],
     current_keys: [u8; 6],
     current_mods: u8,
     nkro_enabled: bool,
@@ -99,6 +101,7 @@ impl Device {
             rgb: RgbMatrix::new(),
             active_layers: [0, 0, 0, 0],
             active_layer_count: 1,
+            keycode_track: [[0; 21]; 6],
             current_keys: [0; 6],
             current_mods: 0,
             nkro_enabled: true,
@@ -283,8 +286,19 @@ impl Device {
     }
 
     fn process_key_event(&mut self, row: u8, col: u8, pressed: bool) {
-        self.sleep.on_activity();
-        let kc = resolve_keycode(&self.active_layers[..self.active_layer_count], row as usize, col as usize);
+        let ri = row as usize; let ci = col as usize;
+        // On press: resolve + store keycode. On release: use stored keycode
+        // so that releasing Fn before the modified key still uses the Fn-layer keycode.
+        let kc = if pressed {
+            self.sleep.on_activity();
+            let kc = resolve_keycode(&self.active_layers[..self.active_layer_count], ri, ci);
+            self.keycode_track[ri][ci] = kc;
+            kc
+        } else {
+            let kc = self.keycode_track[ri][ci];
+            self.keycode_track[ri][ci] = 0;
+            kc
+        };
         if kc == keymap::KC_NO { return; }
 
         if let Some(layer) = mo_layer(kc) {
