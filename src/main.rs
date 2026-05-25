@@ -667,16 +667,15 @@ fn main() -> ! {
     // ── Matrix pin init ──────────────────────────────────────────────
     unsafe { Matrix::init_pins(); }
 
-    // ── Startup: 100ms delay (allow NRF to stabilize) ────────────────
-    { let mut c = 100; while c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } }
+    // ── Startup: 100ms delay with USB poll (keep host enumeration alive) ──
+    { let mut c = 100; while c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } c -= 1; usb_hid.poll(); if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } }
 
-    // ── RF module init with retries (up to 3 attempts per command) ──
+    // ── RF module init with retries (USB polled during waits) ────────
     for &cmd in &[CMD_HAND, CMD_READ_DATA, CMD_RF_STS_SYSC] {
         for _ in 0..3u8 {
             dev.proto.build_link_cmd(cmd);
             uart_flush!(&dev.proto);
-            // 10ms wait with UART RX
-            { let mut rc = 10u32; while rc > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } rc -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } }
+            { let mut rc = 10u32; while rc > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } rc -= 1; usb_hid.poll(); if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } }
             let ok = match cmd {
                 CMD_HAND => dev.proto.f_rf_hand_ok,
                 CMD_READ_DATA => dev.proto.f_rf_read_data_ok,
