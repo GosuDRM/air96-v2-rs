@@ -200,10 +200,10 @@ impl Device {
             // ── RGB matrix controls ────────────────────────────────────
             keymap::KC_RGB_SPD => if pressed { self.rgb.speed = self.rgb.speed.saturating_sub(16); },
             keymap::KC_RGB_SPI => if pressed { self.rgb.speed = (self.rgb.speed + 16).min(255); },
-            keymap::KC_RGB_VAI => if pressed { self.rgb.val = (self.rgb.val + 16).min(255); self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); },
-            keymap::KC_RGB_VAD => if pressed { self.rgb.val = self.rgb.val.saturating_sub(16); self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); },
-            keymap::KC_RGB_MOD => if pressed { self.rgb.mode = (self.rgb.mode + 1) % 10; },
-            keymap::KC_RGB_HUI => if pressed { self.rgb.hue = self.rgb.hue.wrapping_add(16); self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); },
+            keymap::KC_RGB_VAI => if pressed { self.rgb.val = (self.rgb.val + 16).min(255); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } },
+            keymap::KC_RGB_VAD => if pressed { self.rgb.val = self.rgb.val.saturating_sub(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } },
+            keymap::KC_RGB_MOD => if pressed { self.rgb.next_mode(); },
+            keymap::KC_RGB_HUI => if pressed { self.rgb.hue = self.rgb.hue.wrapping_add(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } },
 
             keymap::KC_MAC_TASK => {
                 if pressed {
