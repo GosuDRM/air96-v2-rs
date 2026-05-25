@@ -1,5 +1,17 @@
 # Changelog
 
+## v3.0.1 (2026-05-25)
+
+Cortex-M0+ hardware fixes after on-device flash test.
+
+### Fixed
+
+- **GPIOD clock not enabled** — Matrix column D2 uses GPIOD pin 2, but `dp.GPIOD.split()` was never called. On STM32F0, accessing an unclocked GPIO peripheral causes hard faults or reads all pins as junk. Only the Windows key happened to register because its column wasn't on GPIOD.
+- **`cortex_m::asm::delay()` no-op on Cortex-M0+** — The DWT cycle counter isn't available on armv6m without manual `DEMCR.TRCENA` bit set. `delay()` returned immediately, silently breaking:
+  - NRF wakeup timing in `uart_flush!` (50µs + len×32µs hold time)
+  - Matrix scan signal-settling delay after driving row low
+  Replaced both with `core::ptr::read_volatile(0xE000_E010 as *const u32)` — reads SYST_CSR register as compiler-proof busy-wait.
+
 ## v3.0.0 (2026-05-25)
 
 Initial Rust port of the Air96 V2 keyboard firmware from QMK C (NuPhy v1.0.4).

@@ -143,8 +143,8 @@ impl Matrix {
             unsafe {
                 // Drive row low
                 set_pin_low(row_pin);
-                // Small delay for signal settling
-                cortex_m::asm::delay(5);
+                // Small delay for signal settling (volatile read — Cortex-M0+ DWT not available)
+                core::ptr::read_volatile(0xE000_E010 as *const u32);
             }
 
             for (col_idx, col_pin) in COL_PINS.iter().enumerate() {

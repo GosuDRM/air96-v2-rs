@@ -377,12 +377,13 @@ fn main() -> ! {
     cp.SYST.clear_current();
     cp.SYST.enable_counter();
     cp.SYST.enable_interrupt();
-    // Note: cp.SYST is consumed here, no separate Delay needed
 
     // ── GPIO init ───────────────────────────────────────────────────
     let gpioa = dp.GPIOA.split(&mut rcc);
     let gpiob = dp.GPIOB.split(&mut rcc);
     let gpioc = dp.GPIOC.split(&mut rcc);
+    // GPIOD needed for matrix column D2 (pin 42 on 48-pin package)
+    let _gpiod = dp.GPIOD.split(&mut rcc);
 
     let (mut dc_boost, mut rgb_sdb1, mut rgb_sdb2, mut nrf_wakeup, mut nrf_reset, _nrf_boot, dev_mode, sys_mode) =
         cortex_m::interrupt::free(|cs| {
@@ -418,17 +419,19 @@ fn main() -> ! {
     }
 
     // ── UART TX macro (port of UART_Send_Bytes) ─────────────────────
+    // Uses volatile register read for reliable busy-wait on Cortex-M0+
+    // (DWT cycle counter not available on armv6m without manual DEMCR enable)
     macro_rules! uart_flush {
         ($proto:expr) => {{
             let len = $proto.tx_buf[3] as usize + 5;
             nrf_wakeup.set_low();
-            // ~50µs: 48MHz / 20k ≈ 2400 cycles
-            cortex_m::asm::delay(2400);
+            // ~50µs: 50 * 10 loops with volatile read of SYST_CSR
+            for _ in 0..500u32 { unsafe { core::ptr::read_volatile(0xE000_E010 as *const u32); } }
             for &b in &$proto.tx_buf[..len] {
                 let _ = nb::block!(serial.write(b));
             }
             // ~50µs + len*32µs
-            cortex_m::asm::delay(2400 + len as u32 * 1536);
+            for _ in 0..(500u32 + len as u32 * 320) { unsafe { core::ptr::read_volatile(0xE000_E010 as *const u32); } }
             nrf_wakeup.set_high();
         }};
     }
