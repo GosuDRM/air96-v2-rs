@@ -1094,21 +1094,36 @@ fn main() -> ! {
             }
         }
 
-        // ── Side LED update (run every 1ms tick) ─────────────────────
+        // ── Side LED update + animation tick ──────────────────────────
         if tick {
             dev.side.update(&dev.proto, 1, keyboard_leds);
-            for i in 0..10 {
-                let [r, g, b] = dev.side.output[i];
-                dev.rgb.set_color(100 + i, r, g, b);
-            }
-        }
 
-        // ── RGB animation tick (every ~20ms) ─────────────────────────
-        if tick {
             rgb_anim_timer += 1;
             if rgb_anim_timer >= 20 {
                 rgb_anim_timer = 0;
                 dev.rgb.tick_animation();
+            }
+
+            // Copy side LED output AFTER animation tick so it overrides
+            // any colors set by animations on indices 100-109.
+            for i in 0..10 {
+                let [r, g, b] = dev.side.output[i];
+                dev.rgb.set_color(100 + i, r, g, b);
+            }
+
+            // Per-key lock indicators: solid white, overrides any RGB profile/brightness
+            // LED 55 = Caps Lock key (row 3, col 0), LED 33 = Num Lock key (row 1, col 14)
+            let caps_on = (keyboard_leds & 0x02) != 0 || (dev.proto.rf_led & 0x02) != 0;
+            let num_on  = (keyboard_leds & 0x01) != 0 || (dev.proto.rf_led & 0x01) != 0;
+            if dev.rgb.caps_lock != caps_on {
+                dev.rgb.caps_lock = caps_on;
+                dev.rgb.dirty1 = true;
+                dev.rgb.dirty2 = true;
+            }
+            if dev.rgb.num_lock != num_on {
+                dev.rgb.num_lock = num_on;
+                dev.rgb.dirty1 = true;
+                dev.rgb.dirty2 = true;
             }
         }
 

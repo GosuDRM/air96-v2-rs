@@ -156,10 +156,17 @@ impl<'a> UsbHid<'a> {
         let is_suspended = state == UsbDeviceState::Suspend;
         self.suspended = is_suspended;
 
-        // Read host LED state via SET_REPORT (boot keyboard)
-        let mut led_buf = [0u8; 4];
-        if self.keyboard.pull_raw_report(&mut led_buf).is_ok() {
-            self.led_state = if led_buf[0] == 1 { led_buf[1] } else { led_buf[0] };
+        // Read host LED state via SET_REPORT or OUT endpoint (boot keyboard)
+        let mut led_buf = [0u8; 8];
+        if let Ok(info) = self.keyboard.pull_raw_report(&mut led_buf) {
+            if info.report_id == 1 {
+                self.led_state = led_buf[0];
+            }
+        }
+        if let Ok(len) = self.keyboard.pull_raw_output(&mut led_buf) {
+            if len >= 2 && led_buf[0] == 1 {
+                self.led_state = led_buf[1];
+            }
         }
 
         // Flush any pending keyboard reports

@@ -212,6 +212,10 @@ pub struct RgbMatrix {
     // ── Typing heatmap state ──────────────────────────────────────
     pub heatmap_decrease_timer: u16,
     pub decrease_heatmap: bool,
+    /// Caps Lock active state
+    pub caps_lock: bool,
+    /// Num Lock active state
+    pub num_lock: bool,
 }
 
 impl Default for RgbMatrix {
@@ -249,6 +253,8 @@ impl RgbMatrix {
             pixel_rain_timer: 0,
             heatmap_decrease_timer: 0,
             decrease_heatmap: false,
+            caps_lock: false,
+            num_lock: false,
         }
     }
 
@@ -337,9 +343,14 @@ impl RgbMatrix {
         for (i, led) in self.buffer.iter().enumerate() {
             let map = &LED_MAP[i];
             let buf = if map.driver == 0 { &mut buf1 } else { &mut buf2 };
-            buf[map.r as usize] = led[0];
-            buf[map.g as usize] = led[1];
-            buf[map.b as usize] = led[2];
+            let color = if (self.caps_lock && i == 55) || (self.num_lock && i == 33) {
+                [0xFF, 0xFF, 0xFF]
+            } else {
+                *led
+            };
+            buf[map.r as usize] = color[0];
+            buf[map.g as usize] = color[1];
+            buf[map.b as usize] = color[2];
         }
         (buf1, buf2)
     }

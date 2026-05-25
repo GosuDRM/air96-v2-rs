@@ -2,20 +2,15 @@
 
 ## v3.8.8 (2026-05-26)
 
-Fixed Caps Lock / Num Lock LED indicators and added boot-time NumLock toggle.
+Fixed Caps Lock / Num Lock LED indicators — hardware PWM override ensures key LEDs glow white regardless of RGB brightness setting.
 
 ### Fixed
 
-- **Caps Lock RGB Indicator** — Changed side LED color from cyan to white (0xFF, 0xFF, 0xFF) for Caps Lock indicator on left side strip.
-- **Num Lock RGB Indicator** — Added Num Lock indicator on right side strip (white when NumLock on). Previously NumLock state was ignored entirely.
-
-### Added
-
-- **NumLock Boot Toggle** — Sends a NumLock keypress on first USB configure so numpad keys work immediately on Linux login without manual NumLock toggle.
-
-### Changed
-
-- **`side.update()` API** — Now receives raw `keyboard_leds: u8` byte instead of just `caps_lock: bool`, allowing both Caps Lock and Num Lock to be read from the host LED report.
+- **Caps Lock Key LED** — LED index 55 (Caps Lock key) forced to white (0xFF,0xFF,0xFF) in `build_pwm_buffers()` when Caps Lock is active. Overrides any RGB profile, animation, or brightness=0 setting.
+- **Num Lock Key LED** — LED index 33 (Num Lock key) forced to white when Num Lock is active. Same hardware-level override.
+- **Host LED Report Parsing** — `pull_raw_report()` replaced with `pull_raw_report()` + `pull_raw_output()` to reliably capture SET_REPORT and OUT endpoint LED state from the host.
+- **Side LED Ordering** — Side LED output copied to RGB buffer AFTER animation tick so animations don't overwrite indices 100-109.
+- **Wireless LED Sync** — RF LED bits (`rf_led & 0x01`/`0x02`) merged with USB host LED state for Caps/Num Lock detection in both wired and wireless modes.
 
 ## v3.8.7 (2026-05-26)
 
