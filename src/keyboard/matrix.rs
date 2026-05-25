@@ -143,8 +143,10 @@ impl Matrix {
             unsafe {
                 // Drive row low
                 set_pin_low(row_pin);
-                // Small delay for signal settling (volatile read — Cortex-M0+ DWT not available)
-                core::ptr::read_volatile(0xE000_E010 as *const u32);
+                // ~30µs settling delay (matches QMK matrix_io_delay default)
+                for _ in 0..150u32 {
+                    core::ptr::read_volatile(0xE000_E010 as *const u32);
+                }
             }
 
             for (col_idx, col_pin) in COL_PINS.iter().enumerate() {
@@ -189,16 +191,26 @@ impl Matrix {
     }
 
     /// Check if Escape key (row 0, col 0) is held — for DFU entry.
-    /// Call after `init_pins()`.
+    /// Call after `init_pins()`. Samples 3 times with 30µs settling to
+    /// ride out power-on transients from USB hot-plug.
     pub unsafe fn check_escape_held() -> bool {
-        let row = &ROW_PINS[0]; // C14 = row 0
-        let col = &COL_PINS[0]; // A4 = col 0
-        set_pin_low(row);
-        // Small delay for signal to settle
-        core::ptr::read_volatile(0xE000_E010 as *const u32);
-        let pressed = !read_pin(col);
-        set_pin_high(row);
-        pressed
+        let row = &ROW_PINS[0];
+        let col = &COL_PINS[0];
+        for _ in 0..3u8 {
+            set_pin_low(row);
+            for _ in 0..150u32 {
+                core::ptr::read_volatile(0xE000_E010 as *const u32);
+            }
+            if read_pin(col) {
+                set_pin_high(row);
+                return false;
+            }
+            set_pin_high(row);
+            for _ in 0..50u32 {
+                core::ptr::read_volatile(0xE000_E010 as *const u32);
+            }
+        }
+        true
     }
 
     /// Jump to STM32F0 ROM bootloader (0x1FFF_C800).
