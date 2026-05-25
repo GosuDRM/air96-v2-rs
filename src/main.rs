@@ -864,7 +864,7 @@ fn main() -> ! {
             } else {
                 dev.rgb.set_all(0, 0, 0);
             }
-            pwm_flush!(&mut dev.rgb, i2c);
+            if rgb_flush_timer >= 10 { rgb_flush_timer = 0; pwm_flush!(&mut dev.rgb, i2c); }
 
             if dev.reset_blink_timer > 0 {
                 dev.reset_blink_timer -= 1;
@@ -874,7 +874,6 @@ fn main() -> ! {
                 if dev.reset_blink_phase > 6 {
                     dev.reset_blink_phase = 0; // done
                     dev.rgb.set_all(0, 0, 0);
-                    pwm_flush!(&mut dev.rgb, i2c);
                 }
             }
         }
@@ -892,7 +891,7 @@ fn main() -> ! {
             ];
             let (r, g, b) = colors[(dev.rgb_test_phase - 1) as usize];
             dev.rgb.set_all(r, g, b);
-            pwm_flush!(&mut dev.rgb, i2c);
+            if rgb_flush_timer >= 10 { rgb_flush_timer = 0; pwm_flush!(&mut dev.rgb, i2c); }
 
             if dev.rgb_test_timer > 0 {
                 dev.rgb_test_timer -= 1;
@@ -902,7 +901,6 @@ fn main() -> ! {
                 if dev.rgb_test_phase > 7 {
                     dev.rgb_test_phase = 0;
                     dev.rgb.set_all(0, 0, 0);
-                    pwm_flush!(&mut dev.rgb, i2c);
                 }
             }
         }
