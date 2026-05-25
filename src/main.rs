@@ -667,17 +667,16 @@ fn main() -> ! {
     // ── Matrix pin init ──────────────────────────────────────────────
     unsafe { Matrix::init_pins(); }
 
-    // ── Startup: 500ms delay (C: wait_ms(500) before RF init) ────────
-    { let mut c = 500; while c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } }
+    // ── Startup: 100ms delay (allow NRF to stabilize) ────────────────
+    { let mut c = 100; while c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } }
 
-    // ── RF module init with retries (C: 10 retries per command) ─────
+    // ── RF module init with retries (up to 3 attempts per command) ──
     for &cmd in &[CMD_HAND, CMD_READ_DATA, CMD_RF_STS_SYSC] {
-        for _ in 0..10u8 {
+        for _ in 0..3u8 {
             dev.proto.build_link_cmd(cmd);
             uart_flush!(&dev.proto);
-            // 20ms wait with UART RX (C: wait_ms(5) then uart_receive_pro twice)
-            { let mut rc = 20u32; while rc > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } rc -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } }
-            // Check if ACK received (C: checks f_rf_hand_ok / f_rf_read_data_ok / f_rf_sts_sysc_ok)
+            // 10ms wait with UART RX
+            { let mut rc = 10u32; while rc > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } rc -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } }
             let ok = match cmd {
                 CMD_HAND => dev.proto.f_rf_hand_ok,
                 CMD_READ_DATA => dev.proto.f_rf_read_data_ok,
