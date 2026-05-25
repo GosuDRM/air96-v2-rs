@@ -20,6 +20,8 @@ const CONFIG_NORMAL: u8 = 0x01;
 
 use heapless::Vec;
 
+use super::animation;
+
 /// Single LED channel mapping (port of is31_led struct from keymap.c)
 #[derive(Debug, Clone, Copy)]
 pub struct LedMapping {
@@ -167,6 +169,8 @@ pub struct RgbMatrix {
     pub dirty2: bool,
     /// Current mode
     pub mode: u8,
+    /// Animation tick counter
+    pub anim_tick: u16,
     /// Current hue (0-255)
     pub hue: u8,
     /// Current saturation (0-255)
@@ -188,6 +192,7 @@ impl RgbMatrix {
             dirty1: true,
             dirty2: true,
             mode: 0,
+            anim_tick: 0,
             hue: 255,
             sat: 255,
             val: 223,  // QMK default: 255 - VAL_STEP*2 = 223
@@ -234,6 +239,19 @@ impl RgbMatrix {
     /// Check if dirty and needs I2C flush
     pub fn needs_flush(&self) -> bool { self.dirty1 || self.dirty2 }
 
+    /// Advance animation by one tick and render to buffer (call every 10-50ms)
+    pub fn tick_animation(&mut self) {
+        animation::tick_animation(self);
+    }
+
+    /// Cycle to next animation mode
+    pub fn next_mode(&mut self) {
+        self.mode = (self.mode + 1) % 10;
+        self.anim_tick = 0;
+        self.dirty1 = true;
+        self.dirty2 = true;
+    }
+
     /// Build per-driver PWM buffers for batched I2C write.
     /// Returns (driver1_buffer, driver2_buffer) — each 192 bytes covering all PWM registers.
     /// Caller must: select PWM page, then write buf at register 0x00.
@@ -267,7 +285,7 @@ impl RgbMatrix {
 }
 
 /// HSV → RGB conversion (standard algorithm, port of QMK hsv_to_rgb)
-fn hsv_to_rgb(h: u8, s: u8, v: u8) -> (u8, u8, u8) {
+pub fn hsv_to_rgb(h: u8, s: u8, v: u8) -> (u8, u8, u8) {
     if s == 0 { return (v, v, v); }
     let region = (h as u16 * 6) / 256;
     let remainder = ((h as u16 * 6) % 256) as u8;

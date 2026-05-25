@@ -631,6 +631,7 @@ fn main() -> ! {
     // ── Main loop ────────────────────────────────────────────────────
     let mut t10: u32 = 0;
     let mut rgb_flush_timer: u32 = 0;
+    let mut rgb_anim_timer: u32 = 0;
     let mut t50: u32 = 0;
     let mut periodic_timer: u32 = 0;
 
@@ -918,6 +919,13 @@ fn main() -> ! {
         for i in 0..10 {
             let [r, g, b] = dev.side.output[i];
             dev.rgb.set_color(100 + i, r, g, b);
+        }
+
+        // ── RGB animation tick (every ~20ms) ─────────────────────────
+        rgb_anim_timer += 1;
+        if rgb_anim_timer >= 20 {
+            rgb_anim_timer = 0;
+            dev.rgb.tick_animation();
         }
 
         // ── BAT_NUM ──────────────────────────────────────────────────
