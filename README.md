@@ -1,5 +1,8 @@
 # Air96 V2 — Rust Firmware
 
+> **⚠️ WORK IN PROGRESS** — Safe to flash and use as daily keyboard.
+> RGB matrix animations and some hotkeys are still broken/incomplete.
+
 Full Rust rewrite of the Air96 V2 wireless mechanical keyboard firmware.
 Complete port from the original QMK C firmware, with all 29
 bug/latency/optimization fixes applied and new features added.
