@@ -178,9 +178,9 @@ use crate::config::eeprom;
     assert!(keymap::is_custom(0x5C00)); assert!(keymap::is_custom(0x5C35));
     assert!(!keymap::is_custom(0x0004)); assert!(!keymap::is_custom(0x00E0));
 }
-#[test] fn mac_task() { assert_eq!(keymap::resolve_keycode(&[0], 0, 3), keymap::KC_MAC_TASK); }
-#[test] fn win_f1() { assert_eq!(keymap::get_keycode(2, 0, 1), 0x003A); }
-#[test] fn win_pscr() { assert_eq!(keymap::resolve_keycode(&[2], 0, 13), 0x0046); }
+#[test] fn mac_task() { assert_eq!(keymap::resolve_keycode(&[0], 0, 4), keymap::KC_MAC_TASK); }
+#[test] fn win_f1() { assert_eq!(keymap::get_keycode(2, 0, 2), 0x003A); }
+#[test] fn win_pscr() { assert_eq!(keymap::resolve_keycode(&[2], 0, 14), 0x0046); }
 #[test] fn mac_fn_lnk_rf() { assert_eq!(keymap::resolve_keycode(&[1], 1, 4), keymap::KC_LNK_RF); }
 #[test] fn transparent_fallthrough() { assert_eq!(keymap::resolve_keycode(&[4,3,2,0], 0, 0), 0x0029); }
 #[test] fn all_transparent_is_kc_no() { assert_eq!(keymap::resolve_keycode(&[4], 0, 2), keymap::KC_NO); }
@@ -204,21 +204,21 @@ use crate::config::eeprom;
 }
 #[test] fn mac_media_keys_in_row0() {
     let r = &keymap::LAYER_MAC[0];
-    assert_eq!(r[1], keymap::KC_BRID); assert_eq!(r[2], keymap::KC_BRIU);
-    assert_eq!(r[7], keymap::KC_MPRV); assert_eq!(r[8], keymap::KC_MPLY);
-    assert_eq!(r[9], keymap::KC_MNXT); assert_eq!(r[10], keymap::KC_MUTE);
-    assert_eq!(r[11], keymap::KC_VOLD); assert_eq!(r[12], keymap::KC_VOLU);
+    assert_eq!(r[2], keymap::KC_BRID); assert_eq!(r[3], keymap::KC_BRIU);
+    assert_eq!(r[8], keymap::KC_MPRV); assert_eq!(r[9], keymap::KC_MPLY);
+    assert_eq!(r[10], keymap::KC_MNXT); assert_eq!(r[11], keymap::KC_MUTE);
+    assert_eq!(r[12], keymap::KC_VOLD); assert_eq!(r[13], keymap::KC_VOLU);
 }
 #[test] fn win_fn_media_keys() {
     let r = &keymap::LAYER_WIN_FN[0];
-    assert_eq!(r[1], keymap::KC_BRID); assert_eq!(r[7], keymap::KC_MPRV);
+    assert_eq!(r[2], keymap::KC_BRID); assert_eq!(r[8], keymap::KC_MPRV);
 }
 
 // ===== KEYMAP RGB CONTROLS =====
 #[test] fn mac_fn_rgb_controls() {
     assert_eq!(keymap::LAYER_MAC_FN[4][8], keymap::KC_RGB_SPD);
     assert_eq!(keymap::LAYER_MAC_FN[4][9], keymap::KC_RGB_SPI);
-    assert_eq!(keymap::LAYER_MAC_FN[4][14], keymap::KC_RGB_VAI);
+    assert_eq!(keymap::LAYER_MAC_FN[4][15], keymap::KC_RGB_VAI);
     assert_eq!(keymap::LAYER_MAC_FN[5][15], keymap::KC_RGB_MOD);
     assert_eq!(keymap::LAYER_MAC_FN[5][16], keymap::KC_RGB_VAD);
     assert_eq!(keymap::LAYER_MAC_FN[5][17], keymap::KC_RGB_HUI);
