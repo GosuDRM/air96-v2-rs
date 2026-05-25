@@ -213,32 +213,38 @@ impl Matrix {
         true
     }
 
-    /// Enter STM32 DFU mode by erasing flash page 0 (vector table) then
-    /// resetting. The ROM bootloader sees no valid firmware and stays in
-    /// USB DFU (0483:DF11). Erase runs from RAM so we don't saw off the
-    /// branch we're sitting on.
+    /// Jump to STM32F072 ROM bootloader (USB DFU, 0483:DF11).
+    /// Canonical approach: disable interrupts, set VTOR to system memory
+    /// (0x1FFF_C800), load bootloader's stack pointer and entry address,
+    /// reset peripherals to clean state, then jump.
     pub unsafe fn enter_bootloader() -> ! {
         cortex_m::interrupt::disable();
-        (0xE000_E010 as *mut u32).write_volatile(0);
-        erase_page0_and_reset()
-    }
-}
 
-/// Erases flash page 0 then resets. Placed in `.data` (copied to RAM at
-/// startup) so the CPU keeps fetching instructions while flash is busy.
-#[link_section = ".data"]
-#[inline(never)]
-unsafe fn erase_page0_and_reset() -> ! {
-    let keyr = 0x4002_2004 as *mut u32;
-    let sr   = 0x4002_200C as *const u32;
-    let cr   = 0x4002_2010 as *mut u32;
-    let ar   = 0x4002_2014 as *mut u32;
-    keyr.write_volatile(0x4567_0123);
-    keyr.write_volatile(0xCDEF_89AB);
-    cr.write_volatile(cr.read_volatile() | (1 << 1));
-    ar.write_volatile(0x0800_0000);
-    cr.write_volatile(cr.read_volatile() | (1 << 6));
-    while sr.read_volatile() & 1 != 0 {}
-    (0xE000_ED0C as *mut u32).write_volatile(0x05FA_0004);
-    loop { cortex_m::asm::nop() }
+        // Disable SysTick (set all bits to 0 in CSR)
+        (0xE000_E010 as *mut u32).write_volatile(0);
+
+        // Reset GPIOA so USB pins (PA11/PA12) are in their default state
+        // AHBRSTR: write 1 to GPIOARST bit (17), hardware auto-clears
+        const RCC_AHBRSTR: *mut u32 = 0x4002_1028 as *mut u32;
+        RCC_AHBRSTR.write_volatile(1 << 17);  // set GPIOARST
+        RCC_AHBRSTR.write_volatile(0);         // clear (hardware may have already)
+
+        // Point VTOR to bootloader's vector table (critical — bootloader uses USB IRQs)
+        let cp = cortex_m::Peripherals::steal();
+        cp.SCB.vtor.write(0x1FFF_C800);
+
+        // Load bootloader's initial stack pointer (first word of vector table)
+        let sp = core::ptr::read_volatile(0x1FFF_C800 as *const u32);
+        // Load bootloader's reset vector (second word of vector table)
+        let rv = core::ptr::read_volatile(0x1FFF_C804 as *const u32);
+
+        // Set MSP to bootloader's stack, then jump to bootloader entry
+        core::arch::asm!(
+            "msr MSP, {sp}",
+            "bx {rv}",
+            sp = in(reg) sp,
+            rv = in(reg) rv,
+            options(noreturn)
+        );
+    }
 }
