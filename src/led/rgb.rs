@@ -214,6 +214,12 @@ pub struct RgbMatrix {
     pub decrease_heatmap: bool,
 }
 
+impl Default for RgbMatrix {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RgbMatrix {
     pub fn new() -> Self {
         Self {
@@ -335,8 +341,6 @@ impl RgbMatrix {
             buf[map.g as usize] = led[1];
             buf[map.b as usize] = led[2];
         }
-        self.dirty1 = false;
-        self.dirty2 = false;
         (buf1, buf2)
     }
 

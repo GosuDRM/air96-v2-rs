@@ -5,6 +5,7 @@
 //!
 //! Ported from rf.c (Persama, 2023) — GosuDRM 2026, all 29 fixes applied.
 
+#![allow(clippy::needless_range_loop)]
 
 // ── Frame constants (ansi.h) ──────────────────────────────────────────
 pub const UART_HEAD: u8 = 0x5A;
@@ -145,6 +146,13 @@ pub struct UartProtocol {
     pub disconnect_delay: u8,
     pub f_send_channel: bool,
     pub error_cnt: u8,
+    pub uart_pending: core::cell::Cell<bool>,
+}
+
+impl Default for UartProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl UartProtocol {
@@ -181,6 +189,7 @@ impl UartProtocol {
             disconnect_delay: 0,
             f_send_channel: false,
             error_cnt: 0,
+            uart_pending: core::cell::Cell::new(false),
         }
     }
 
@@ -203,12 +212,13 @@ impl UartProtocol {
         self.tx_buf[3] = data.len() as u8;
         self.tx_buf[4..4 + data.len()].copy_from_slice(data);
         self.tx_buf[4 + data.len()] = Self::checksum(data);
+        self.uart_pending.set(true);
         data.len() + 5
     }
 
     /// Build command with protocol-aware logic (port of uart_send_cmd switch)
     pub fn build_link_cmd(&mut self, cmd: u8) -> usize {
-        match cmd {
+        let len = match cmd {
             CMD_SLEEP | CMD_HAND => self.build_cmd(cmd, &[0]),
             CMD_SET_LINK => {
                 let ch = self.link_mode as u8;
@@ -264,7 +274,9 @@ impl UartProtocol {
                 len + 5
             }
             _ => self.build_cmd(cmd, &[]),
-        }
+        };
+        self.uart_pending.set(true);
+        len
     }
 
     // ── Report sender (port of uart_send_report, rf.c:582-602) ────────
@@ -298,7 +310,7 @@ impl UartProtocol {
             f_byte_send = true;
         }
 
-        let mut key_code: u8 = 8;
+        let mut key_code: u8 = 0;
         for i in 1..32 {
             let change_mask = self.bitkb_report_buf[i] ^ now_bit_report[i];
             let mut offset_mask: u8 = 1;
@@ -361,6 +373,7 @@ impl UartProtocol {
             let data_len = self.rx_buf[3] as usize;
             if (self.rx_len as usize) - 5 != data_len {
                 self.rx_state = RxState::FormatErr;
+                self.rx_len = 0;
                 return None;
             }
             // Validate checksum
@@ -368,6 +381,7 @@ impl UartProtocol {
             let expected_csum = &self.rx_buf[4 + data_len];
             if Self::checksum(data) != *expected_csum {
                 self.rx_state = RxState::SumErr;
+                self.rx_len = 0;
                 return None;
             }
             self.rx_state = RxState::Idle;

@@ -4,8 +4,10 @@
 //! 5 modes: Wave, Mix (spectrum), Static, Breath, Off.
 //! Includes battery indicator, system switch indicator, sleep indicator,
 //! RF link indicator, and Caps Lock indicator.
-//!
-//! All GosuDRM fixes applied (B4 dead code removed, B5 battery fix, etc.)
+#![allow(clippy::needless_range_loop)]
+#![allow(unused_parens)]
+#![allow(clippy::if_same_then_else)]
+#![allow(dead_code)]
 
 use crate::wireless::uart::{UartProtocol, LinkMode, RfState};
 
@@ -200,6 +202,12 @@ pub struct SideLeds {
     pub output: [[u8; 3]; 10],
 }
 
+impl Default for SideLeds {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SideLeds {
     pub fn new() -> Self {
         Self {
@@ -230,10 +238,10 @@ impl SideLeds {
     /// Apply brightness scaling (port of count_rgb_light, side.c:334-346)
     /// C formula: component * (light_temp + 1) >> 8
     fn apply_light(r: u8, g: u8, b: u8, light_temp: u8) -> (u8, u8, u8) {
-        let scale = (light_temp as u16 + 1) as u16;
-        ((r as u16 * scale >> 8) as u8,
-         (g as u16 * scale >> 8) as u8,
-         (b as u16 * scale >> 8) as u8)
+        let scale = (light_temp as u16 + 1);
+        (((r as u16 * scale) >> 8) as u8,
+         ((g as u16 * scale) >> 8) as u8,
+         ((b as u16 * scale) >> 8) as u8)
     }
 
     /// Point advance helper (port of light_point_playing)
@@ -485,7 +493,7 @@ impl SideLeds {
         // 3. System switch indicator
         if self.sys_show_flag {
             let (r, g, b) = if proto.sys_sw_state == 0xA2 { (0x80, 0x80, 0x80) } else { (0x00, 0x00, 0x80) };
-            if (self.sys_show_timer / 500) % 2 == 0 {
+            if (self.sys_show_timer / 500).is_multiple_of(2) {
                 self.set_right(r, g, b);
             } else {
                 self.set_right(0, 0, 0);
@@ -496,7 +504,7 @@ impl SideLeds {
         // 4. Sleep indicator (right side, 500ms blink, 3000ms duration)
         if self.sleep_show_flag {
             let (r, g, b) = if self.sleep_enabled { (0x00, 0x80, 0x00) } else { (0x80, 0x00, 0x00) };
-            if (self.sleep_show_timer / 500) % 2 == 0 {
+            if (self.sleep_show_timer / 500).is_multiple_of(2) {
                 self.set_right(r, g, b);
             } else {
                 self.set_right(0, 0, 0);

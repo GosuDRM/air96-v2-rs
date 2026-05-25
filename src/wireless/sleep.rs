@@ -29,6 +29,12 @@ pub struct SleepManager {
     pub f_wakeup_prepare: bool,
 }
 
+impl Default for SleepManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SleepManager {
     pub fn new() -> Self {
         Self {

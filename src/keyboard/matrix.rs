@@ -5,8 +5,9 @@
 //!   rows:  [C14, C15, A0, A1, A2, A3]
 //!   cols:  [A4, A5, A6, A7, B0, B1, B10, B11, B12, B13, B14, B15,
 //!           A8, A9, A10, A15, B3, C10, C11, C12, D2]
-//!
-//! Uses raw GPIO register reads for speed — same approach as C firmware.
+
+#![allow(clippy::missing_safety_doc)]
+
 
 use stm32f0xx_hal::pac;
 
@@ -110,6 +111,12 @@ pub struct Matrix {
     counters: [[u8; 21]; 6],
 }
 
+impl Default for Matrix {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Matrix {
     pub fn new() -> Self {
         Self {
@@ -161,25 +168,24 @@ impl Matrix {
                 let bit_mask = 1u8 << (bit_pos % 8);
 
                 let debounced_bit = (self.debounced[byte_idx] & bit_mask) != 0;
+                let ctr = &mut self.counters[row_idx][col_idx];
 
-                if debounced_bit != pressed {
-                    let ctr = &mut self.counters[row_idx][col_idx];
-                    *ctr += 1;
-                    if *ctr >= 2 {  // 2ms debounce (QMK eager-style, low latency)
-                        *ctr = 0;
-                        if pressed {
-                            self.debounced[byte_idx] |= bit_mask;
-                        } else {
-                            self.debounced[byte_idx] &= !bit_mask;
-                        }
-                        let _ = events.push(KeyEvent {
-                            row: row_idx as u8,
-                            col: col_idx as u8,
-                            pressed,
-                        });
+                if *ctr > 0 {
+                    // Lockout window is active — decrement timer and ignore any chatter
+                    *ctr -= 1;
+                } else if debounced_bit != pressed {
+                    // State changed outside lockout window — trigger instantly (0ms latency!)
+                    if pressed {
+                        self.debounced[byte_idx] |= bit_mask;
+                    } else {
+                        self.debounced[byte_idx] &= !bit_mask;
                     }
-                } else {
-                    self.counters[row_idx][col_idx] = 0;
+                    let _ = events.push(KeyEvent {
+                        row: row_idx as u8,
+                        col: col_idx as u8,
+                        pressed,
+                    });
+                    *ctr = 5; // 5ms chatter lockout window
                 }
             }
 
@@ -241,6 +247,7 @@ impl Matrix {
     /// Disables all NVIC interrupts, clears pending flags, resets SysTick,
     /// points VTOR to system memory (0x1FFF_C800), sets MSP and jumps.
     /// Must only be called from check_dfu_magic_and_jump() at boot.
+    #[allow(asm_sub_register)]
     pub unsafe fn jump_to_bootloader() -> ! {
         // Disable interrupts globally
         cortex_m::interrupt::disable();
@@ -276,8 +283,8 @@ impl Matrix {
         cortex_m::asm::isb();
 
         // Load bootloader's initial SP and reset vector (from remapped 0x0000_0000)
-        let sp = core::ptr::read_volatile(0x0000_0000 as *const u32);
-        let rv = core::ptr::read_volatile(0x0000_0004 as *const u32);
+        let sp = core::ptr::read_volatile(core::ptr::null::<u32>());
+        let rv = core::ptr::read_volatile(core::ptr::dangling::<u32>());
 
         // Set MSP then jump — never returns
         core::arch::asm!(

@@ -5,6 +5,13 @@
 //!
 //! Animations ported from quantum/rgb_matrix/animations/
 
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::manual_range_contains)]
+#![allow(clippy::manual_is_multiple_of)]
+#![allow(clippy::needless_late_init)]
+#![allow(dead_code)]
+#![allow(unused_parens)]
+
 use super::rgb::{RgbMatrix, LED_COUNT, hsv_to_rgb};
 
 // ── Matrix dimensions (for framebuffer effects) ──────────────────────
@@ -71,7 +78,7 @@ pub fn qadd8(i: u8, j: u8) -> u8 {
 
 /// qsub8: Saturating unsigned 8-bit subtract (clamp to 0).
 pub fn qsub8(i: u8, j: u8) -> u8 {
-    if i < j { 0 } else { i - j }
+    i.saturating_sub(j)
 }
 
 /// sqrt16: Integer square root for 16-bit values.
@@ -227,8 +234,8 @@ pub fn matrix_co_ordered(row: usize, col: usize) -> u8 {
 
 /// Map row/col to LED index(es). Returns count and led indices.
 pub fn map_row_column_to_led(row: u8, col: u8, out: &mut [u8; 8]) -> u8 {
-    let target_y = (row * 10) as u8;
-    let target_x = (col * 10) as u8;
+    let target_y = (row * 10);
+    let target_x = (col * 10);
     let mut count: u8 = 0;
     for i in 0..100usize {
         let (px, py) = LED_POSITIONS[i];
@@ -300,8 +307,8 @@ fn runner_dx_dy_dist(rgb: &mut RgbMatrix, effect: fn(i16, i16, u8, u8) -> u8) {
 /// Effect runner sin_cos_i: calls fn(hsv, sin, cos, i, time) -> hsv
 fn runner_sin_cos_i(rgb: &mut RgbMatrix, effect: fn(i8, i8, u8, u8) -> u8) {
     let time = compute_time(rgb.anim_tick, rgb.speed, 4);
-    let cos_value: i8 = (cos8(time as u8) as i16 - 128) as i8;
-    let sin_value: i8 = (sin8(time as u8) as i16 - 128) as i8;
+    let cos_value: i8 = (cos8(time) as i16 - 128) as i8;
+    let sin_value: i8 = (sin8(time) as i16 - 128) as i8;
     let sat = rgb.sat;
     let val = rgb.val;
     for i in 0..LED_COUNT {
@@ -445,7 +452,7 @@ pub fn render_gradient_left_right(rgb: &mut RgbMatrix) {
     let val = rgb.val;
     for i in 0..LED_COUNT {
         let (px, _) = LED_POSITIONS[i];
-        let hue = rgb.hue.wrapping_add((scale as u16 * px as u16 >> 5) as u8);
+        let hue = rgb.hue.wrapping_add(((scale as u16 * px as u16) >> 5) as u8);
         let (r, g, b) = hsv_to_rgb(hue, sat, val);
         rgb.set_color(i, r, g, b);
     }
@@ -458,7 +465,7 @@ pub fn render_rainbow_moving_chevron(rgb: &mut RgbMatrix) {
     let val = rgb.val;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
-        let dy = if py >= CENTER_Y { py - CENTER_Y } else { CENTER_Y - py };
+        let dy = py.abs_diff(CENTER_Y);
         let hue = rgb.hue.wrapping_add(dy).wrapping_add(px.wrapping_sub(time));
         let (r, g, b) = hsv_to_rgb(hue, sat, val);
         rgb.set_color(i, r, g, b);
@@ -523,7 +530,7 @@ pub fn render_band_sat(rgb: &mut RgbMatrix) {
     for i in 0..LED_COUNT {
         let (px, _) = LED_POSITIONS[i];
         let s_mid = scale8(px, 228).wrapping_add(28);
-        let dist = if s_mid >= time { s_mid - time } else { time - s_mid };
+        let dist = s_mid.abs_diff(time);
         // QMK: int16_t s = hsv.s - abs(scale8(x,228)+28-time)*8; hsv.s = scale8(s<0?0:s, hsv.s)
         let s = (rgb.sat as i16) - (dist as i16 * 8);
         let sat = if s < 0 { 0 } else { scale8(s as u8, rgb.sat) };
@@ -576,7 +583,7 @@ pub fn render_band_val(rgb: &mut RgbMatrix) {
     for i in 0..LED_COUNT {
         let (px, _) = LED_POSITIONS[i];
         let v_mid = scale8(px, 228).wrapping_add(28);
-        let dist = if v_mid >= time { v_mid - time } else { time - v_mid };
+        let dist = v_mid.abs_diff(time);
         // QMK: int16_t v = hsv.v - abs(scale8(x,228)+28-time)*8; hsv.v = scale8(v<0?0:v, hsv.v)
         let v = (rgb.val as i16) - (dist as i16 * 8);
         let val = if v < 0 { 0 } else { scale8(v as u8, rgb.val) };
@@ -652,11 +659,10 @@ pub fn render_digital_rain(rgb: &mut RgbMatrix) {
                 if random8() < (255u16 / DIGITAL_RAIN_DROPS as u16) as u8 {
                     rgb.frame_buffer[row][col] = max_intensity;
                 }
-            } else if rgb.frame_buffer[row][col] > 0 && rgb.frame_buffer[row][col] < max_intensity {
-                if rgb.digital_rain_decay == decay_ticks {
+            } else if rgb.frame_buffer[row][col] > 0 && rgb.frame_buffer[row][col] < max_intensity
+                && rgb.digital_rain_decay == decay_ticks {
                     rgb.frame_buffer[row][col] = rgb.frame_buffer[row][col].wrapping_sub(1);
                 }
-            }
 
             let fb_val = rgb.frame_buffer[row][col];
             let mut led_buf = [NO_LED; 8];
@@ -777,8 +783,8 @@ pub fn render_hue_wave(rgb: &mut RgbMatrix) {
     let val = rgb.val;
     for i in 0..LED_COUNT {
         let (px, _) = LED_POSITIONS[i];
-        let diff = if px >= time { px - time } else { time - px };
-        let hue = rgb.hue.wrapping_add(scale8(diff as u8, huedelta));
+        let diff = px.abs_diff(time);
+        let hue = rgb.hue.wrapping_add(scale8(diff, huedelta));
         let (r, g, b) = hsv_to_rgb(hue, sat, val);
         rgb.set_color(i, r, g, b);
     }
@@ -787,7 +793,7 @@ pub fn render_hue_wave(rgb: &mut RgbMatrix) {
 // ── Mode 25: JELLYBEAN_RAINDROPS ────────────────────────────────────
 pub fn render_jellybean_raindrops(rgb: &mut RgbMatrix) {
     let scaled = scale16by8(rgb.anim_tick, qadd8(rgb.speed, 16));
-    if scaled % 5 == 0 {
+    if scaled.is_multiple_of(5) {
         let idx = random8_max(LED_COUNT as u8) as usize;
         let h = random8();
         let s = random8_min_max(127, 255);
@@ -920,7 +926,7 @@ pub fn render_rainbow_pinwheels(rgb: &mut RgbMatrix) {
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let dy = (py as i16) - (CENTER_Y as i16);
-        let dx_abs = if px >= CENTER_X { px - CENTER_X } else { CENTER_X - px };
+        let dx_abs = px.abs_diff(CENTER_X);
         let delta = ((dy * 3 * cos_v as i16 + (56 - dx_abs as i16) * 3 * sin_v as i16) / 128) as i8;
         let hue = (rgb.hue as i16 + delta as i16) as u8;
         let (r, g, b) = hsv_to_rgb(hue, sat, val);
@@ -931,7 +937,7 @@ pub fn render_rainbow_pinwheels(rgb: &mut RgbMatrix) {
 // ── Mode 31: RAINDROPS ──────────────────────────────────────────────
 pub fn render_raindrops(rgb: &mut RgbMatrix) {
     let scaled = scale16by8(rgb.anim_tick, qadd8(rgb.speed, 16));
-    if scaled % 10 == 0 {
+    if scaled.is_multiple_of(10) {
         let idx = random8_max(LED_COUNT as u8) as usize;
         let delta_h: i8 = ((rgb.hue.wrapping_add(180).wrapping_mul(4)) as i16 / 4) as i8;
         let h = rgb.hue.wrapping_add((delta_h * (random8() as i8 & 0x03)) as u8);
@@ -1127,7 +1133,7 @@ pub fn render_solid_reactive_cross(rgb: &mut RgbMatrix) {
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
-        let mut hsv_h = rgb.hue;
+        let hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
         for j in start..count {
             if j as usize >= rgb.hit_index.len() { break; }
@@ -1153,7 +1159,7 @@ pub fn render_solid_reactive_multicross(rgb: &mut RgbMatrix) {
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
-        let mut hsv_h = rgb.hue;
+        let hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
         for j in 0..count {
             if j as usize >= rgb.hit_index.len() { break; }
@@ -1193,8 +1199,8 @@ pub fn render_solid_reactive_nexus(rgb: &mut RgbMatrix) {
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
             if dist > 72 { effect = 255; }
-            if (dx > 8 || dx < -8) && (dy > 8 || dy < -8) { effect = 255; }
-            let hue = rgb.hue.wrapping_add((dy / 4) as u8);
+            if !(-8..=8).contains(&dx) && !(-8..=8).contains(&dy) { effect = 255; }
+            let _hue = rgb.hue.wrapping_add((dy / 4) as u8);
             hsv_v = qadd8(hsv_v, 255u16.wrapping_sub(effect) as u8);
             // Use last processed hue
             rgb.set_color(i, 0, 0, 0); // Placeholder - will be set below
@@ -1232,7 +1238,7 @@ pub fn render_solid_reactive_nexus_v2(rgb: &mut RgbMatrix) {
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
             if dist > 72 { effect = 255; }
-            if (dx > 8 || dx < -8) && (dy > 8 || dy < -8) { effect = 255; }
+            if !(-8..=8).contains(&dx) && !(-8..=8).contains(&dy) { effect = 255; }
             hsv_h = rgb.hue.wrapping_add((dy / 4) as u8);
             hsv_v = qadd8(hsv_v, 255u16.wrapping_sub(effect) as u8);
             any_hit = true;
@@ -1267,7 +1273,7 @@ pub fn render_solid_reactive_multinexus(rgb: &mut RgbMatrix) {
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
             if dist > 72 { effect = 255; }
-            if (dx > 8 || dx < -8) && (dy > 8 || dy < -8) { effect = 255; }
+            if !(-8..=8).contains(&dx) && !(-8..=8).contains(&dy) { effect = 255; }
             hsv_h = rgb.hue.wrapping_add((dy / 4) as u8);
             hsv_v = qadd8(hsv_v, 255u16.wrapping_sub(effect) as u8);
             any_hit = true;
@@ -1288,7 +1294,7 @@ pub fn render_solid_reactive_wide(rgb: &mut RgbMatrix) {
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
-        let mut hsv_h = rgb.hue;
+        let hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
         for j in start..count {
             if j as usize >= rgb.hit_index.len() { break; }
@@ -1315,7 +1321,7 @@ pub fn render_solid_reactive_multiwide(rgb: &mut RgbMatrix) {
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
-        let mut hsv_h = rgb.hue;
+        let hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
         for j in 0..count {
             if j as usize >= rgb.hit_index.len() { break; }
@@ -1343,7 +1349,7 @@ pub fn render_starlight(rgb: &mut RgbMatrix) {
     let diff: i8 = (raw as i16 - 128i16) as i8;
     let v = scale8(abs8(diff).wrapping_mul(2), rgb.val);
     let (r, g, b) = hsv_to_rgb(rgb.hue, rgb.sat, v);
-    if scale16by8(rgb.anim_tick, qadd8(rgb.speed, 5)) % 5 == 0 {
+    if scale16by8(rgb.anim_tick, qadd8(rgb.speed, 5)).is_multiple_of(5) {
         let idx = random8_max(LED_COUNT as u8) as usize;
         rgb.set_color(idx, r, g, b);
     }
@@ -1355,7 +1361,7 @@ pub fn render_starlight_dual_hue(rgb: &mut RgbMatrix) {
     let raw = sin8(time);
     let diff: i8 = (raw as i16 - 128i16) as i8;
     let v = scale8(abs8(diff).wrapping_mul(2), rgb.val);
-    if scale16by8(rgb.anim_tick, qadd8(rgb.speed, 5)) % 5 == 0 {
+    if scale16by8(rgb.anim_tick, qadd8(rgb.speed, 5)).is_multiple_of(5) {
         let idx = random8_max(LED_COUNT as u8) as usize;
         // rand() % (30+1 - -30) + -30 = random in [-30, 30]
         let offset: i8 = (random8() % 61) as i8 - 30;
@@ -1371,7 +1377,7 @@ pub fn render_starlight_dual_sat(rgb: &mut RgbMatrix) {
     let raw = sin8(time);
     let diff: i8 = (raw as i16 - 128i16) as i8;
     let v = scale8(abs8(diff).wrapping_mul(2), rgb.val);
-    if scale16by8(rgb.anim_tick, qadd8(rgb.speed, 5)) % 5 == 0 {
+    if scale16by8(rgb.anim_tick, qadd8(rgb.speed, 5)).is_multiple_of(5) {
         let idx = random8_max(LED_COUNT as u8) as usize;
         let offset: i8 = (random8() % 61) as i8 - 30;
         let sat = (rgb.sat as i16 + offset as i16).clamp(0, 255) as u8;
@@ -1402,8 +1408,8 @@ pub fn typing_heatmap_keypress(rgb: &mut RgbMatrix, row: u8, col: u8) {
             if target_led == led_idx {
                 rgb.frame_buffer[i_row][i_col] = qadd8(rgb.frame_buffer[i_row][i_col], HEATMAP_INCREASE_STEP);
             } else {
-                let dx = (lx as i16 - tx as i16) as i16;
-                let dy = (ly as i16 - ty as i16) as i16;
+                let dx = (lx as i16 - tx as i16);
+                let dy = (ly as i16 - ty as i16);
                 let distance = sqrt16((dx * dx + dy * dy) as u16);
                 if distance <= HEATMAP_SPREAD {
                     let mut amount = qsub8(HEATMAP_SPREAD, distance);

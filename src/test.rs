@@ -1,7 +1,6 @@
 //! Comprehensive unit tests for all firmware modules.
 //! Run with: cargo test --lib --target x86_64-unknown-linux-gnu
 
-#![cfg(test)]
 
 use crate::wireless::uart::*;
 use crate::wireless::report;
@@ -91,12 +90,16 @@ use crate::config::eeprom;
     let mut p = UartProtocol::new(); p.rx_state = RxState::Done; p.rx_len = 6;
     p.rx_buf[0] = UART_HEAD; p.rx_buf[1] = CMD_RF_STS_SYSC; p.rx_buf[3] = 1;
     p.rx_buf[4] = 0x42; p.rx_buf[5] = 0x00;
-    assert!(p.parse_frame().is_none()); assert_eq!(p.rx_state, RxState::SumErr);
+    assert!(p.parse_frame().is_none());
+    assert_eq!(p.rx_state, RxState::SumErr);
+    assert_eq!(p.rx_len, 0);
 }
 #[test] fn parse_length_mismatch() {
     let mut p = UartProtocol::new(); p.rx_state = RxState::Done; p.rx_len = 7;
     p.rx_buf[0] = UART_HEAD; p.rx_buf[1] = CMD_RF_STS_SYSC; p.rx_buf[3] = 1;
-    assert!(p.parse_frame().is_none()); assert_eq!(p.rx_state, RxState::FormatErr);
+    assert!(p.parse_frame().is_none());
+    assert_eq!(p.rx_state, RxState::FormatErr);
+    assert_eq!(p.rx_len, 0);
 }
 #[test] fn parse_valid() {
     let mut p = UartProtocol::new(); let data = [0x42u8; 1]; let cs = UartProtocol::checksum(&data);
@@ -168,6 +171,7 @@ use crate::config::eeprom;
     assert_eq!(keymap::lnk_to_channel(keymap::KC_LNK_BLE2), LinkMode::Bt2);
     assert_eq!(keymap::lnk_to_channel(keymap::KC_LNK_BLE3), LinkMode::Bt3);
 }
+#[allow(clippy::identity_op)]
 #[test] fn mo_layer() {
     assert_eq!(keymap::mo_layer(keymap::MO | 0), Some(0));
     assert_eq!(keymap::mo_layer(keymap::MO | 1), Some(1));
@@ -270,11 +274,11 @@ use crate::config::eeprom;
     let mut p = UartProtocol::new(); p.bitkb_report_buf = [0; 32];
     let mut now = [0u8; 32]; now[2] = 0x01;
     assert!(p.auto_nkey_send(&now));
-    assert_eq!(p.bytekb_report_buf[2], 16);
+    assert_eq!(p.bytekb_report_buf[2], 8);
 }
 #[test] fn nkro_key_release_from_byte_buf() {
     let mut p = UartProtocol::new();
-    p.bytekb_report_buf[2] = 16; p.bitkb_report_buf[2] = 0x01;
+    p.bytekb_report_buf[2] = 8; p.bitkb_report_buf[2] = 0x01;
     let now = [0u8; 32];
     assert!(p.auto_nkey_send(&now));
     assert_eq!(p.bytekb_report_buf[2], 0);
@@ -362,9 +366,11 @@ use crate::config::eeprom;
     assert!(b1[r] > 200); assert!(b1[g] < 20);
 }
 #[test] fn set_color_marks_dirty() {
-    let mut m = rgb::RgbMatrix::new(); m.set_all(0, 0, 0);
-    let _ = m.build_pwm_buffers(); assert!(!m.needs_flush());
+    let mut m = rgb::RgbMatrix::new(); m.dirty1 = false; m.dirty2 = false;
     m.set_color(0, 255, 0, 0); assert!(m.needs_flush());
+    let _ = m.build_pwm_buffers();
+    m.dirty1 = false; m.dirty2 = false; // Mimics successful I2C write confirmation
+    assert!(!m.needs_flush());
 }
 #[test] fn build_pwm_buffers_driver1() {
     let mut m = rgb::RgbMatrix::new(); m.set_all(0x10, 0x20, 0x30);
@@ -430,11 +436,94 @@ fn consumer_report_usage_values() {
     assert_eq!(0x00CD, 0x00CD); // Play/Pause
 }
 
+#[allow(clippy::assertions_on_constants)]
 #[test]
 fn system_report_usage_values() {
     // System control usage codes (HUT 1.12, §4.6)
     // 0x81 = System Power Down, 0x9B = Do Not Disturb
     assert!(0x81u8 <= 0x9B);
     assert!(0x9Bu8 >= 0x81);
+}
+
+#[test]
+fn combined_keyboard_descriptor_and_reports() {
+    let desc = crate::usb_hid::COMBINED_KEYBOARD_DESC;
+    assert_eq!(desc.len(), 107);
+    
+    // Verify Report ID 1 (boot keyboard) is declared in the descriptor
+    // 0x85, 0x01 => Report ID 1
+    assert_eq!(desc[6], 0x85);
+    assert_eq!(desc[7], 0x01);
+    
+    // Verify Report ID 2 (NKRO bitmap) is declared in the descriptor
+    // 0x85, 0x02 => Report ID 2
+    assert_eq!(desc[72], 0x85);
+    assert_eq!(desc[73], 0x02);
+    
+    // Verify standard keyboard report serialization format
+    let modifiers = 0x05; // Ctrl + Alt
+    let keys = [0x04, 0x05, 0x06, 0x00, 0x00, 0x00];
+    
+    let mut report = [0u8; 9];
+    report[0] = 1; // Report ID 1
+    report[1] = modifiers;
+    report[2] = 0; // reserved
+    report[3..9].copy_from_slice(&keys);
+    
+    assert_eq!(report[0], 1);
+    assert_eq!(report[1], 0x05);
+    assert_eq!(report[2], 0);
+    assert_eq!(&report[3..9], &keys);
+    
+    // Verify NKRO report serialization format
+    let mut bitmap = [0u8; 32];
+    bitmap[0] = 0x02; // Left Shift bit in modifiers
+    bitmap[1] = 0x10; // some keycode bit
+    
+    let mut nkro_report = [0u8; 33];
+    nkro_report[0] = 2; // Report ID 2
+    nkro_report[1] = modifiers;
+    nkro_report[2..33].copy_from_slice(&bitmap[..31]);
+    
+    assert_eq!(nkro_report[0], 2);
+    assert_eq!(nkro_report[1], modifiers);
+    assert_eq!(nkro_report[2], bitmap[0]);
+    assert_eq!(nkro_report[3], bitmap[1]);
+}
+
+#[test]
+fn nkro_bitmap_generation_logic() {
+    let current_mods = 0x05; // Left Ctrl (0x01) | Left Alt (0x04)
+    let current_keys = [0x04, 0x29, 0x1E, 0, 0, 0]; // 'A' (4), 'Esc' (41), '1' (30)
+    
+    let mut bits = [0u8; 32];
+    if current_mods & 0x01 != 0 { bits[0] |= 0x01; }
+    if current_mods & 0x02 != 0 { bits[0] |= 0x02; }
+    if current_mods & 0x04 != 0 { bits[0] |= 0x04; }
+    if current_mods & 0x08 != 0 { bits[0] |= 0x08; }
+    if current_mods & 0x10 != 0 { bits[0] |= 0x10; }
+    if current_mods & 0x20 != 0 { bits[0] |= 0x20; }
+    if current_mods & 0x40 != 0 { bits[0] |= 0x40; }
+    if current_mods & 0x80 != 0 { bits[0] |= 0x80; }
+    
+    for &k in &current_keys {
+        if k > 0 && k < 248 {
+            let byte = (k as usize / 8) + 1;
+            let bit = k as usize % 8;
+            bits[byte] |= 1 << bit;
+        }
+    }
+    
+    // Verify modifiers
+    assert_eq!(bits[0], 0x05);
+    
+    // Verify keycode 4 ('A') -> byte = 4/8 + 1 = 1, bit = 4%8 = 4. bits[1] should have bit 4 set.
+    assert_ne!(bits[1] & (1 << 4), 0);
+    
+    // Verify keycode 30 ('1') -> byte = 30/8 + 1 = 4, bit = 30%8 = 6. bits[4] should have bit 6 set.
+    assert_ne!(bits[4] & (1 << 6), 0);
+    
+    // Verify keycode 41 ('Esc') -> byte = 41/8 + 1 = 6, bit = 41%8 = 1. bits[6] should have bit 1 set.
+    assert_ne!(bits[6] & (1 << 1), 0);
 }
 

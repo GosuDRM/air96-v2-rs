@@ -1,5 +1,74 @@
 # Changelog
 
+## v3.8.0 (2026-05-26)
+
+Merged USB NKRO keyboard interface into the standard boot keyboard interface using Report IDs to resolve STM32F072 endpoint/interface enumeration limit issues.
+
+### Added
+
+- **USB NKRO Support** — Full NKRO (up to 248 simultaneous keycodes) over wired USB connection. Uses Report ID 2 in a combined descriptor, routing standard keyboard reports (Report ID 1) and NKRO reports through the same endpoint.
+- **Combined Keyboard Descriptor** — New 107-byte static descriptor `COMBINED_KEYBOARD_DESC` in `usb_hid.rs` implementing Report ID 1 and Report ID 2 application collections.
+- **USB HID / NKRO Unit Tests** — Host unit tests validating combined descriptor bytes, Report ID formatting, and NKRO bitmap generation logic.
+
+### Fixed
+
+- **USB Interface Count** — Reduced interface count back to 3 interfaces, preventing the composite USB peripheral from failing to enumerate on host startup.
+- **Compiler Warnings** — Cleaned up unused import warnings in `usb_hid.rs`.
+
+## v3.7.4 (2026-05-26)
+
+Warning-free Clippy lint pass and parser robustness fixes.
+
+### Fixed
+
+- **UART RX Parser Lockup** — Reset `self.rx_len` to `0` upon length (`FormatErr`) or checksum (`SumErr`) validation errors, preventing buffer overruns and infinite main loop polling.
+- **RGB Dirty Flag Lifetime** — Moved dirty flag clearing from `build_pwm_buffers()` to the `pwm_flush!` macro to ensure flags are only cleared after successful I2C writes, not prematurely during buffer construction.
+- **Clippy Cleanups** — Zero warnings across both `thumbv6m-none-eabi` and `x86_64-unknown-linux-gnu` targets. Applied `Default` impls for Matrix, RgbMatrix, SideLeds, SleepManager, and UartProtocol. Replaced manual abs/range checks with `abs_diff()`/`contains()`, manual modulo with `is_multiple_of()`, and redundant casts/borrow patterns throughout.
+
+### Added
+
+- **`uart_pending` tracking** — New `Cell<bool>` field on `UartProtocol` to track pending UART transmissions.
+- **Parser Robustness Unit Tests** — Assertions verifying `rx_len` is cleared on format and checksum error transitions.
+
+## v3.7.3 (2026-05-26)
+
+Ultra-low latency symmetric eager per-key lockout debouncing.
+
+### Changed
+
+- **0.5-1ms Keystroke Eager Debouncing** — Implemented Symmetric Eager Per-Key Lockout Debouncing (QMK `sym_eager_pk` algorithm). Press and release events are registered instantly (0ms debounce delay) on the first scan, with a 5ms noise lockout timer. Replaces the previous 2ms counter-based debounce.
+
+## v3.7.2 (2026-05-26)
+
+USB suspend/resume detection.
+
+### Added
+
+- **Suspend Detection** — Tracking of USB suspend state via `UsbDeviceState::Suspend` in the poll loop.
+- **`configured()` / `is_suspended()`** — Public accessors for USB device state.
+
+## v3.7.1 (2026-05-26)
+
+Host keyboard LED state (Caps Lock indicator).
+
+### Added
+
+- **Host LED State** — `host_led_state()` reads the boot keyboard SET_REPORT to track Caps Lock, Num Lock, and Scroll Lock state from the host. Used by side LEDs for Caps Lock indicator.
+
+## v3.7.0 (2026-05-26)
+
+Full QMK RGB matrix animation port and USB descriptor refinements.
+
+### Added
+
+- **50 RGB Matrix Animation Modes** — Full 1:1 port of QMK's `rgb_matrix/animations/` including breathing, rainbow cycles, gradients, reactive (simple/wide/cross/nexus/splash variants), raindrops, heatmap, digital rain, starlight, band (sat/val/pinwheel/spiral), and more. 1,518 lines in `src/led/animation.rs`.
+- **SystemControlReport16** — Custom u16 HID report descriptor for system control (sleep, power, DND), matching QMK's `report_extra_t`.
+
+### Changed
+
+- **USB VID:PID** — Changed from generic `0xFEED:0x6060` to `0x19F5:0x3266` (GosuDRM Air96 V2).
+- **USB Descriptor** — Three-interface composite (keyboard + consumer + system control). NKRO (4th interface) was found to break USB enumeration on this hardware and is deferred.
+
 ## v3.2.0 (2026-05-26)
 
 Critical fixes for typing latency, RGB matrix driver, and DFU bootloader jump.

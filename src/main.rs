@@ -136,6 +136,26 @@ impl Device {
         report::send_keyboard(&mut self.proto, 0, &[0; 6]);
     }
 
+    fn get_nkro_bitmap(&self) -> [u8; 32] {
+        let mut bits = [0u8; 32];
+        if self.current_mods & 0x01 != 0 { bits[0] |= 0x01; } // Left Ctrl
+        if self.current_mods & 0x02 != 0 { bits[0] |= 0x02; } // Left Shift
+        if self.current_mods & 0x04 != 0 { bits[0] |= 0x04; } // Left Alt
+        if self.current_mods & 0x08 != 0 { bits[0] |= 0x08; } // Left GUI
+        if self.current_mods & 0x10 != 0 { bits[0] |= 0x10; } // Right Ctrl
+        if self.current_mods & 0x20 != 0 { bits[0] |= 0x20; } // Right Shift
+        if self.current_mods & 0x40 != 0 { bits[0] |= 0x40; } // Right Alt
+        if self.current_mods & 0x80 != 0 { bits[0] |= 0x80; } // Right GUI
+        for &k in &self.current_keys {
+            if k > 0 && k < 248 {
+                let byte = (k as usize / 8) + 1;
+                let bit = k as usize % 8;
+                bits[byte] |= 1 << bit;
+            }
+        }
+        bits
+    }
+
     /// Defer EEPROM save (non-blocking — saved in main loop during idle ticks)
     fn save_config(&mut self) {
         self.save_pending = true;
@@ -378,24 +398,7 @@ impl Device {
         report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
         // Send NKRO report when enabled (wireless only, USB does 6KRO boot protocol)
         if self.nkro_enabled && self.proto.link_mode != LinkMode::Usb {
-            let mut bits = [0u8; 32];
-            // Modifier bits in byte 0
-            if self.current_mods & 0x01 != 0 { bits[0] |= 0x01; } // Left Ctrl
-            if self.current_mods & 0x02 != 0 { bits[0] |= 0x02; } // Left Shift
-            if self.current_mods & 0x04 != 0 { bits[0] |= 0x04; } // Left Alt
-            if self.current_mods & 0x08 != 0 { bits[0] |= 0x08; } // Left GUI
-            if self.current_mods & 0x10 != 0 { bits[0] |= 0x10; } // Right Ctrl
-            if self.current_mods & 0x20 != 0 { bits[0] |= 0x20; } // Right Shift
-            if self.current_mods & 0x40 != 0 { bits[0] |= 0x40; } // Right Alt
-            if self.current_mods & 0x80 != 0 { bits[0] |= 0x80; } // Right GUI
-            // Keycode bits in bytes 1-31 (keycodes 0-247)
-            for &k in &self.current_keys {
-                if k > 0 && k < 248 {
-                    let byte = (k as usize / 8) + 1;
-                    let bit = k as usize % 8;
-                    bits[byte] |= 1 << bit;
-                }
-            }
+            let bits = self.get_nkro_bitmap();
             report::send_nkro(&mut self.proto, &bits);
         }
     }
@@ -428,6 +431,8 @@ macro_rules! pwm_flush {
             tx_buf[1..].copy_from_slice(&b2);
             let _ = $i2c.write(0x53, &tx_buf);
         }
+        $rgb.dirty1 = false;
+        $rgb.dirty2 = false;
     }};
 }
 
@@ -506,8 +511,8 @@ fn main() -> ! {
             let wake = gpioc.pc4.into_push_pull_output(cs);
             let rst  = gpiob.pb4.into_push_pull_output(cs);
             let boot = gpiob.pb5.into_pull_up_input(cs);
-            let dev  = gpioc.pc0.into_pull_up_input(cs);  // C uses setPinInputHigh
-            let sys  = gpioc.pc1.into_pull_up_input(cs);  // C uses setPinInputHigh
+            let dev  = gpioc.pc0.into_floating_input(cs);
+            let sys  = gpioc.pc1.into_floating_input(cs);
             (dc, sdb1, sdb2, wake, rst, boot, dev, sys)
         });
 
@@ -667,22 +672,14 @@ fn main() -> ! {
     // ── Matrix pin init ──────────────────────────────────────────────
     unsafe { Matrix::init_pins(); }
 
-    // ── Startup: 100ms delay with USB poll (keep host enumeration alive) ──
-    { let mut c = 100; while c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } c -= 1; usb_hid.poll(); if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } }
+    // ── Startup: 100ms delay (L1 fix) ────────────────────────────────
+    { let mut c = 100; while c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } c -= 1; } }
 
-    // ── RF module init with retries (USB polled during waits) ────────
+    // ── RF module init ───────────────────────────────────────────────
     for &cmd in &[CMD_HAND, CMD_READ_DATA, CMD_RF_STS_SYSC] {
-        for _ in 0..3u8 {
-            dev.proto.build_link_cmd(cmd);
-            uart_flush!(&dev.proto);
-            { let mut rc = 10u32; while rc > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } rc -= 1; usb_hid.poll(); if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } }
-            let ok = match cmd {
-                CMD_HAND => dev.proto.f_rf_hand_ok,
-                CMD_READ_DATA => dev.proto.f_rf_read_data_ok,
-                _ => dev.proto.f_rf_sts_sysc_ok,
-            };
-            if ok { break; }
-        }
+        dev.proto.build_link_cmd(cmd);
+        uart_flush!(&dev.proto);
+        { let mut c = 5; while c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } c -= 1; } }
     }
     dev.proto.build_link_cmd(CMD_SET_NAME);
     uart_flush!(&dev.proto);
@@ -729,10 +726,17 @@ fn main() -> ! {
                 dev.dfu_hold_ticks = 0;
             }
         }
-        if events.len() > 0 {
+        if !events.is_empty() {
             if dev.proto.link_mode == LinkMode::Usb {
                 // Wired mode: send keyboard + consumer + system via USB HID
-                usb_hid.send_keyboard(dev.current_mods, &dev.current_keys);
+                if dev.nkro_enabled {
+                    let bits = dev.get_nkro_bitmap();
+                    usb_hid.send_nkro(dev.current_mods, &bits);
+                    usb_hid.send_keyboard(0, &[0; 6]); // Clear standard report
+                } else {
+                    usb_hid.send_keyboard(dev.current_mods, &dev.current_keys);
+                    usb_hid.send_nkro(0, &[0; 32]); // Clear NKRO report
+                }
                 if dev.pending_consumer_usb != 0 {
                     usb_hid.send_consumer(dev.pending_consumer_usb);
                 }
@@ -1023,7 +1027,7 @@ fn main() -> ! {
         rgb_anim_timer += 1;
         if rgb_anim_timer >= 20 {
             rgb_anim_timer = 0;
-            // dev.rgb.tick_animation();  // disabled for debug
+            dev.rgb.tick_animation();
         }
 
         // ── BAT_NUM ──────────────────────────────────────────────────
