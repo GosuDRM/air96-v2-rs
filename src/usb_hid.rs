@@ -33,7 +33,11 @@ pub struct SystemControlReport16 {
     pub usage_id: u16,
 }
 
-/// Combined Keyboard Descriptor (110 bytes)
+/// Combined Keyboard Descriptor (107 bytes)
+///
+/// DO NOT MODIFY — USB NKRO combined descriptor (Report ID 1 + 2).
+/// Adding interfaces, changing report IDs, or altering the descriptor
+/// layout breaks USB enumeration on STM32F072. Verified working at v3.8.x.
 ///
 /// Merges Report ID 1 (standard boot keyboard) and Report ID 2 (NKRO keyboard bitmap)
 /// into a single HID interface to prevent USB endpoint/interface limitations.

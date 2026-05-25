@@ -234,6 +234,12 @@ impl Matrix {
         true
     }
 
+    // ─────────────────────────────────────────────────────────────────
+    // DO NOT MODIFY — DFU bootloader entry (STM32F072 Cortex-M0+).
+    // This sequence is hardware-sensitive: NVIC clear, SYSCFG remap,
+    // VTOR jump, interrupt re-enable. Any change can soft-brick the
+    // keyboard requiring BOOT0 pad shorting.
+    // ─────────────────────────────────────────────────────────────────
     /// Write DFU magic to RTC backup register then trigger system reset.
     /// On next boot, check_dfu_magic_and_jump() detects the magic and
     /// performs a clean jump to the ROM bootloader.
@@ -262,6 +268,11 @@ impl Matrix {
         loop {}
     }
 
+    // ─────────────────────────────────────────────────────────────────
+    // DO NOT MODIFY — Bootloader jump (STM32F072 Cortex-M0+).
+    // NVIC, SysTick, GPIO reset, VTOR remap, raw asm MSP+bx.
+    // Same sensitivity as enter_bootloader above.
+    // ─────────────────────────────────────────────────────────────────
     /// Full-cleanup jump to STM32F072 ROM bootloader (0483:DF11).
     /// Disables all NVIC interrupts, clears pending flags, resets SysTick,
     /// points VTOR to system memory (0x1FFF_C800), sets MSP and jumps.

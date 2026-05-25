@@ -95,6 +95,8 @@ struct Device {
     dial_sys_debounce: u16,
     dial_dev_last: bool,
     dial_sys_last: bool,
+    /// One-shot: send NumLock at boot so numpad works on Linux login
+    boot_numlock_done: bool,
 }
 
 impl Device {
@@ -127,6 +129,7 @@ impl Device {
             dial_sys_debounce: 0,
             dial_dev_last: false,
             dial_sys_last: false,
+            boot_numlock_done: false,
         }
     }
 
@@ -786,6 +789,15 @@ fn main() -> ! {
 
         // Always poll USB HID to flush reports/process tokens as fast as possible
         let _usb_configured = usb_hid.poll();
+
+        // One-shot NumLock at boot so numpad works on Linux without manual toggle
+        if !dev.boot_numlock_done && usb_hid.configured() {
+            usb_hid.send_keyboard(0, &[0x53, 0, 0, 0, 0, 0]); // NumLock press
+            usb_hid.poll(); // flush it
+            usb_hid.send_keyboard(0, &[0; 6]); // release
+            dev.boot_numlock_done = true;
+        }
+
         let keyboard_leds = usb_hid.host_led_state();
 
         // ── 1ms Timing-Dependent Logic ──────────────────────────────
@@ -825,6 +837,9 @@ fn main() -> ! {
             }
 
             // ── Dial switch read (debounced: 500ms stable before acting) ──
+            // DO NOT MODIFY — Wireless/wired toggle via PC0 (DEV_MODE) / PC1 (SYS_MODE).
+            // 500ms debounce, floating inputs (PCB has external pull-ups).
+            // Changing pin mode or debounce timing breaks mode switching.
             if dev.f_dial_sw_init_ok {
                 let dev_now = dev_mode.is_high().unwrap_or(false);
                 let sys_now = sys_mode.is_high().unwrap_or(false);

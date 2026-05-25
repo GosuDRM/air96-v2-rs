@@ -1,5 +1,10 @@
 //! Keymap engine — port of keymaps/default/keymap.c + ansi.h custom keycodes
 //!
+//! DO NOT MODIFY — 5-layer keymap aligned to physical matrix from keyboard.json.
+//! Matrix positions are PCB-specific (column [0,1] is empty). Changing key
+//! positions or layer indices without the physical matrix reference breaks
+//! all key mappings. Verified working at v3.8.x.
+//!
 //! 5 layers: Mac base(0), Mac Fn(1), Win base(2), Win Fn(3), Function(4)
 //! Physical matrix positions from keyboards/nuphy/air96_v2/keyboard.json LAYOUT:
 //!   Row 0: ESC, [0,1]=empty, F-keys at 2-13, Print at 14
