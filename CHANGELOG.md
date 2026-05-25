@@ -1,5 +1,20 @@
 # Changelog
 
+## v3.0.5 (2026-05-26)
+
+DFU entry finally working — the VTOR register was never being pointed at the bootloader's vector table.
+
+### Fixed
+
+- **DFU entry (VTOR)** — Every previous attempt (MEM_MODE+reset, bootstrap jump, flash page erase) failed because VTOR was still pointing to firmware's vector table. The ROM bootloader uses USB interrupts — without VTOR set to `0x1FFF_C800`, its ISRs never fire and USB enumeration silently fails. Fixed: disable interrupts, reset GPIOA, write VTOR, load bootloader SP/entry, `bx` jump. This is the canonical pattern used by embassy-rs, keyberon, and all working STM32F0 Rust projects.
+- **3-second Escape hold DFU** — Hold Escape alone (no other keys) for 3 seconds to enter DFU at any time. No power-cycling, no BOOT0 pads, no boot-only check.
+
+## v3.0.3 (2026-05-26)
+
+### Fixed
+
+- **Keymap alignment** — Completely rewrote all 5 keymap layers against the physical matrix from `keyboard.json`. Column `[0,1]` is empty on the PCB — every top-row key was shifted left by one. DEL/HOME/END/PGUP/PGDN were all on wrong rows. Enter was at empty position `[3,12]` instead of `[3,13]`.
+
 ## v3.0.2 (2026-05-26)
 
 Critical firmware fixes — custom keycodes, DFU, RGB, and side LEDs were all non-functional.
