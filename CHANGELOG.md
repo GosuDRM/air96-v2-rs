@@ -1,5 +1,22 @@
 # Changelog
 
+## v3.8.8 (2026-05-26)
+
+Fixed Caps Lock / Num Lock LED indicators and added boot-time NumLock toggle.
+
+### Fixed
+
+- **Caps Lock RGB Indicator** — Changed side LED color from cyan to white (0xFF, 0xFF, 0xFF) for Caps Lock indicator on left side strip.
+- **Num Lock RGB Indicator** — Added Num Lock indicator on right side strip (white when NumLock on). Previously NumLock state was ignored entirely.
+
+### Added
+
+- **NumLock Boot Toggle** — Sends a NumLock keypress on first USB configure so numpad keys work immediately on Linux login without manual NumLock toggle.
+
+### Changed
+
+- **`side.update()` API** — Now receives raw `keyboard_leds: u8` byte instead of just `caps_lock: bool`, allowing both Caps Lock and Num Lock to be read from the host LED report.
+
 ## v3.8.7 (2026-05-26)
 
 Fixed hotkey behavior to match the C firmware 1:1.

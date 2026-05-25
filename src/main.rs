@@ -1096,8 +1096,7 @@ fn main() -> ! {
 
         // ── Side LED update (run every 1ms tick) ─────────────────────
         if tick {
-            let caps_lock = (keyboard_leds & 0x02) != 0;
-            dev.side.update(&dev.proto, 1, caps_lock);
+            dev.side.update(&dev.proto, 1, keyboard_leds);
             for i in 0..10 {
                 let [r, g, b] = dev.side.output[i];
                 dev.rgb.set_color(100 + i, r, g, b);

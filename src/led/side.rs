@@ -466,7 +466,7 @@ impl SideLeds {
     // ── Main update (port of m_side_led_show, side.c:829) ─────────────
     /// elapsed_ms is the number of 1ms ticks passed since last call.
     /// M11 fix: rf_link_show_time increments per 10ms, so divide elapsed by 10.
-    pub fn update(&mut self, proto: &UartProtocol, elapsed_ms: u32, caps_lock: bool) {
+    pub fn update(&mut self, proto: &UartProtocol, elapsed_ms: u32, keyboard_leds: u8) {
         self.play_cnt = self.play_cnt.saturating_add(elapsed_ms as u8);
         self.play_timer = 0;
         self.rf_blink_timer = self.rf_blink_timer.saturating_add(elapsed_ms);
@@ -512,10 +512,16 @@ impl SideLeds {
             if self.sleep_show_timer >= 3000 { self.sleep_show_flag = false; }
         }
 
-        // 4. Caps Lock indicator (left side override)
-        // M16: use rf_led bit 0x02 for caps lock detection
+        // 4. Caps Lock indicator (left side, white glow when on)
+        let caps_lock = (keyboard_leds & 0x02) != 0;
         if caps_lock || (proto.rf_led & 0x02) != 0 {
-            self.set_left(0x00, 0x80, 0x80); // Cyan
+            self.set_left(0xFF, 0xFF, 0xFF); // White
+        }
+
+        // 4b. Num Lock indicator (right side, white glow when on)
+        let num_lock = (keyboard_leds & 0x01) != 0;
+        if num_lock {
+            self.set_right(0xFF, 0xFF, 0xFF); // White
         }
 
         // 5. RF link indicator (left side override)
