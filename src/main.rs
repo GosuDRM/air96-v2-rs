@@ -539,7 +539,12 @@ fn main() -> ! {
 
     unsafe {
         let usart1 = &*pac::USART1::ptr();
+        // Disable USART to modify UE-locked control bits (like PCE and M0)
+        usart1.cr1.modify(|_, w| w.ue().clear_bit());
+        // Configure 9-bit word length (8 data bits + 1 parity bit) and enable parity control
+        // Default PS is 0 (Even parity)
         usart1.cr1.modify(|_, w| w.pce().set_bit().m0().set_bit());
+        // Re-enable USART
         usart1.cr1.modify(|_, w| w.ue().set_bit());
     }
 
@@ -558,6 +563,31 @@ fn main() -> ! {
             // ~50µs + len*32µs
             for _ in 0..(500u32 + len as u32 * 320) { unsafe { core::ptr::read_volatile(0xE000_E010 as *const u32); } }
             nrf_wakeup.set_high();
+        }};
+    }
+
+    // ── UART RX wait macro with 2ms idle gap packet detection ──────
+    macro_rules! uart_wait_rx {
+        ($dev:expr, $ms:expr) => {{
+            let mut _c = $ms as u32;
+            let mut rx_idle = 0;
+            while _c > 0 {
+                while !tick_arrived() { cortex_m::asm::wfi(); }
+                _c -= 1;
+                while let Ok(b) = serial.read() {
+                    $dev.proto.rx_queue_byte(b);
+                    rx_idle = 0;
+                }
+                if $dev.proto.rx_len > 0 {
+                    rx_idle += 1;
+                    if rx_idle >= 2 {
+                        let _ = $dev.proto.rx_finish();
+                        rx_idle = 0;
+                    }
+                } else {
+                    rx_idle = 0;
+                }
+            }
         }};
     }
 
@@ -870,7 +900,7 @@ fn main() -> ! {
                             dev.proto.build_link_cmd(wireless::uart::CMD_NEW_ADV);
                             uart_flush!(&dev.proto);
                             // 20ms wait with UART RX
-                            { let mut _c = 20u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
+                            uart_wait_rx!(dev, 20);
                             if dev.proto.f_rf_new_adv_ok { break; }
                         }
                     }
@@ -892,7 +922,7 @@ fn main() -> ! {
                         }
                         dev.proto.build_link_cmd(CMD_SET_LINK);
                         uart_flush!(&dev.proto);
-                        { let mut _c = 500u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
+                        uart_wait_rx!(dev, 500);
                         dev.proto.build_link_cmd(wireless::uart::CMD_CLR_DEVICE);
                         uart_flush!(&dev.proto);
 
@@ -942,11 +972,11 @@ fn main() -> ! {
                 // ── RF state sync ────────────────────────────────────
                 if dev.proto.f_rf_reset {
                     dev.proto.f_rf_reset = false;
-                    { let mut _c = 100u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
+                    uart_wait_rx!(dev, 100);
                     nrf_reset.set_low();
-                    { let mut _c = 50u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
+                    uart_wait_rx!(dev, 50);
                     nrf_reset.set_high();
-                    { let mut _c = 50u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
+                    uart_wait_rx!(dev, 50);
                 } else if dev.proto.f_send_channel {
                     dev.proto.f_send_channel = false;
                     dev.proto.build_link_cmd(CMD_SET_LINK);

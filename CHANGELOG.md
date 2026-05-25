@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.8.6 (2026-05-26)
+
+Fixed wireless mode issues (Bluetooth pairing, channel switching, wireless switch button, 2.4GHz).
+
+### Fixed
+
+- **USART1 Parity Configuration Lockout** — Modified the USART1 initialization to disable the peripheral (`UE = 0`) before configuring parity control (`PCE = 1`) and word length (`M0 = 1`), preventing the configuration from being locked out and ignored by the hardware, and enabling communication with the NRF52 module.
+- **Robust Blocking UART RX Loops** — Implemented a safe `uart_wait_rx!(dev, ms)` macro with 2ms transmission gap detection to replace broken inline blocking loops, ensuring incomplete frames are not prematurely discarded during blocking resets, pairing, or channel transitions.
+
 ## v3.8.5 (2026-05-26)
 
 Fixed the DFU bootloader jump logic.
