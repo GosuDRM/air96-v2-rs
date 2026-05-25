@@ -73,6 +73,7 @@ struct Device {
     f_sleep_show: bool,
     f_bat_hold: bool,
     dfu_hold_ticks: u16,
+    save_pending: bool,
     sleep_enabled: bool,
     bat_num_show: bool,
     // ── Non-blocking state machines ────────────────────────────
@@ -106,6 +107,7 @@ impl Device {
             rgb_test_press: false, rgb_test_press_delay: 0,
             f_sys_show: false, f_sleep_show: false, f_bat_hold: false,
             dfu_hold_ticks: 0,
+            save_pending: false,
             sleep_enabled: true, bat_num_show: false,
             reset_blink_phase: 0, reset_blink_timer: 0,
             rgb_test_phase: 0, rgb_test_timer: 0,
@@ -120,17 +122,9 @@ impl Device {
         report::send_keyboard(&mut self.proto, 0, &[0; 6]);
     }
 
-    /// Save side LED config to EEPROM
-    fn save_config(&self) {
-        let cfg = UserConfig {
-            side_mode: self.side.mode,
-            side_brightness: self.side.brightness,
-            side_speed: self.side.speed,
-            side_colour: self.side.colour,
-            side_rgb: self.side.rgb_enabled,
-            sleep_enable: self.sleep_enabled,
-        };
-        eeprom::save(&cfg);
+    /// Defer EEPROM save (non-blocking — saved in main loop during idle ticks)
+    fn save_config(&mut self) {
+        self.save_pending = true;
     }
 
     fn process_custom_keycode(&mut self, kc: u16, pressed: bool) {
@@ -602,6 +596,7 @@ fn main() -> ! {
 
     // ── Main loop ────────────────────────────────────────────────────
     let mut t10: u32 = 0;
+    let mut rgb_flush_timer: u32 = 0;
     let mut t50: u32 = 0;
     let mut periodic_timer: u32 = 0;
 
@@ -916,9 +911,25 @@ fn main() -> ! {
             dev.side.show_sleep(dev.sleep_enabled);
         }
 
-        // ── RGB matrix I2C flush ─────────────────────────────────────
-        if dev.rgb.needs_flush() {
+        // ── RGB matrix I2C flush (throttled to every 10 ms for latency) ──
+        rgb_flush_timer += 1;
+        if dev.rgb.needs_flush() && rgb_flush_timer >= 10 {
+            rgb_flush_timer = 0;
             pwm_flush!(&mut dev.rgb, i2c);
+        }
+
+        // ── Deferred EEPROM save (only when idle, no events) ──────────
+        if dev.save_pending && events.len() == 0 {
+            dev.save_pending = false;
+            let cfg = UserConfig {
+                side_mode: dev.side.mode,
+                side_brightness: dev.side.brightness,
+                side_speed: dev.side.speed,
+                side_colour: dev.side.colour,
+                side_rgb: dev.side.rgb_enabled,
+                sleep_enable: dev.sleep_enabled,
+            };
+            eeprom::save(&cfg);
         }
 
         // ── Periodic sender (every 200ms) ────────────────────────────
