@@ -136,10 +136,8 @@ impl Device {
         report::send_keyboard(&mut self.proto, 0, &[0; 6]);
     }
 
-    fn get_nkro_bitmap(&self) -> [u8; 32] {
-        let mut bits = [0u8; 32];
-        // Note: bits[0] intentionally zeroed — modifiers are already in the
-        // separate modifier byte of the NKRO report (report[1]).
+    fn get_nkro_bitmap(&self) -> [u8; 31] {
+        let mut bits = [0u8; 31];
         for &k in &self.current_keys {
             if k > 0 && k < 248 {
                 let byte = k as usize / 8;
@@ -392,7 +390,22 @@ impl Device {
         report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
         // Send NKRO report when enabled (wireless only, USB does 6KRO boot protocol)
         if self.nkro_enabled && self.proto.link_mode != LinkMode::Usb {
-            let bits = self.get_nkro_bitmap();
+            let mut bits = [0u8; 32];
+            if self.current_mods & 0x01 != 0 { bits[0] |= 0x01; } // Left Ctrl
+            if self.current_mods & 0x02 != 0 { bits[0] |= 0x02; } // Left Shift
+            if self.current_mods & 0x04 != 0 { bits[0] |= 0x04; } // Left Alt
+            if self.current_mods & 0x08 != 0 { bits[0] |= 0x08; } // Left GUI
+            if self.current_mods & 0x10 != 0 { bits[0] |= 0x10; } // Right Ctrl
+            if self.current_mods & 0x20 != 0 { bits[0] |= 0x20; } // Right Shift
+            if self.current_mods & 0x40 != 0 { bits[0] |= 0x40; } // Right Alt
+            if self.current_mods & 0x80 != 0 { bits[0] |= 0x80; } // Right GUI
+            for &k in &self.current_keys {
+                if k > 0 && k < 248 {
+                    let byte = (k as usize / 8) + 1;
+                    let bit = k as usize % 8;
+                    bits[byte] |= 1 << bit;
+                }
+            }
             report::send_nkro(&mut self.proto, &bits);
         }
     }
@@ -723,13 +736,12 @@ fn main() -> ! {
         if !events.is_empty() {
             if dev.proto.link_mode == LinkMode::Usb {
                 // Wired mode: send keyboard + consumer + system via USB HID
+                // Send BOTH report IDs — combined descriptor creates two input
+                // devices on Linux; both must agree on key state.
+                usb_hid.send_keyboard(dev.current_mods, &dev.current_keys);
                 if dev.nkro_enabled {
                     let bits = dev.get_nkro_bitmap();
                     usb_hid.send_nkro(dev.current_mods, &bits);
-                    usb_hid.send_keyboard(0, &[0; 6]); // Clear standard report
-                } else {
-                    usb_hid.send_keyboard(dev.current_mods, &dev.current_keys);
-                    usb_hid.send_nkro(0, &[0; 32]); // Clear NKRO report
                 }
                 if dev.pending_consumer_usb != 0 {
                     usb_hid.send_consumer(dev.pending_consumer_usb);

@@ -110,6 +110,8 @@ pub struct UsbHid<'a> {
     led_state: u8,
     /// Tracks suspend state for edge detection
     suspended: bool,
+    pending_keyboard_report: Option<[u8; 9]>,
+    pending_nkro_report: Option<[u8; 33]>,
 }
 
 impl<'a> UsbHid<'a> {
@@ -120,13 +122,22 @@ impl<'a> UsbHid<'a> {
         let device = UsbDeviceBuilder::new(bus, UsbVidPid(USB_VID, USB_PID))
             .manufacturer("GosuDRM")
             .product("Air96 V2 Keyboard")
-            .serial_number("v3.8.0")
+            .serial_number("v3.8.1")
             .device_class(0x00)
             .device_sub_class(0x00)
             .device_protocol(0x00)
             .build();
 
-        Self { device, keyboard, consumer, system, led_state: 0, suspended: false }
+        Self {
+            device,
+            keyboard,
+            consumer,
+            system,
+            led_state: 0,
+            suspended: false,
+            pending_keyboard_report: None,
+            pending_nkro_report: None,
+        }
     }
 
     /// Poll the USB device and HID classes. Returns true if data was exchanged.
@@ -147,6 +158,9 @@ impl<'a> UsbHid<'a> {
             self.led_state = if led_buf[0] == 1 { led_buf[1] } else { led_buf[0] };
         }
 
+        // Flush any pending keyboard reports
+        self.flush_reports();
+
         result
     }
 
@@ -166,21 +180,42 @@ impl<'a> UsbHid<'a> {
         self.led_state
     }
 
+    fn flush_reports(&mut self) {
+        if let Some(report) = self.pending_keyboard_report {
+            match self.keyboard.push_raw_input(&report) {
+                Ok(_) => self.pending_keyboard_report = None,
+                Err(UsbError::WouldBlock) => {}
+                Err(_) => self.pending_keyboard_report = None,
+            }
+        }
+        if self.pending_keyboard_report.is_none() {
+            if let Some(report) = self.pending_nkro_report {
+                match self.keyboard.push_raw_input(&report) {
+                    Ok(_) => self.pending_nkro_report = None,
+                    Err(UsbError::WouldBlock) => {}
+                    Err(_) => self.pending_nkro_report = None,
+                }
+            }
+        }
+    }
+
     pub fn send_keyboard(&mut self, modifiers: u8, keys: &[u8; 6]) {
         let mut report = [0u8; 9];
         report[0] = 1; // Report ID 1
         report[1] = modifiers;
         report[2] = 0; // reserved
         report[3..9].copy_from_slice(keys);
-        let _ = self.keyboard.push_raw_input(&report);
+        self.pending_keyboard_report = Some(report);
+        self.flush_reports();
     }
 
-    pub fn send_nkro(&mut self, modifiers: u8, bitmap: &[u8; 32]) {
+    pub fn send_nkro(&mut self, modifiers: u8, bitmap: &[u8; 31]) {
         let mut report = [0u8; 33];
         report[0] = 2; // Report ID 2
         report[1] = modifiers;
-        report[2..33].copy_from_slice(&bitmap[..31]);
-        let _ = self.keyboard.push_raw_input(&report);
+        report[2..33].copy_from_slice(bitmap);
+        self.pending_nkro_report = Some(report);
+        self.flush_reports();
     }
 
     pub fn send_consumer(&mut self, usage: u16) {
@@ -195,7 +230,7 @@ impl<'a> UsbHid<'a> {
 
     pub fn release_all(&mut self) {
         self.send_keyboard(0, &[0; 6]);
-        self.send_nkro(0, &[0; 32]);
+        self.send_nkro(0, &[0; 31]);
         self.send_consumer(0);
         self.send_system(0);
     }

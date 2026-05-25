@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.8.1 (2026-05-26)
+
+Fixed stuck keys and auto-repeat in wired USB NKRO mode.
+
+### Fixed
+
+- **USB Report Block Queue** — Pushing standard (Report ID 1) and NKRO (Report ID 2) reports in quick succession on a single shared endpoint caused the second push to return `WouldBlock` and be silently discarded, causing stuck keys on simultaneous press/release events. Implemented non-blocking report retry queues in `UsbHid`. Retries occur automatically on subsequent SysTick poll loops until reports are successfully sent.
+- **NKRO Descriptor Realignment** — Corrected NKRO payload format to use a 31-byte key bitmap with direct `k / 8` byte offset mapping and modifiers completely decoupled into a separate byte. This resolves a +8 keycode shift and duplicate modifier bits.
+
 ## v3.8.0 (2026-05-26)
 
 Merged USB NKRO keyboard interface into the standard boot keyboard interface using Report IDs to resolve STM32F072 endpoint/interface enumeration limit issues.

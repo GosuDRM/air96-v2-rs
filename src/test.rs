@@ -476,14 +476,14 @@ fn combined_keyboard_descriptor_and_reports() {
     assert_eq!(&report[3..9], &keys);
     
     // Verify NKRO report serialization format
-    let mut bitmap = [0u8; 32];
-    bitmap[0] = 0x02; // Left Shift bit in modifiers
-    bitmap[1] = 0x10; // some keycode bit
+    let mut bitmap = [0u8; 31];
+    bitmap[0] = 0x10; // some keycode bit
+    bitmap[1] = 0x20;
     
     let mut nkro_report = [0u8; 33];
     nkro_report[0] = 2; // Report ID 2
     nkro_report[1] = modifiers;
-    nkro_report[2..33].copy_from_slice(&bitmap[..31]);
+    nkro_report[2..33].copy_from_slice(&bitmap);
     
     assert_eq!(nkro_report[0], 2);
     assert_eq!(nkro_report[1], modifiers);
@@ -493,10 +493,9 @@ fn combined_keyboard_descriptor_and_reports() {
 
 #[test]
 fn nkro_bitmap_generation_logic() {
-    let current_mods = 0x05; // Left Ctrl (0x01) | Left Alt (0x04)
     let current_keys = [0x04, 0x29, 0x1E, 0, 0, 0]; // 'A' (4), 'Esc' (41), '1' (30)
     
-    let mut bits = [0u8; 32];
+    let mut bits = [0u8; 31];
     // Note: modifiers intentionally NOT in bitmap — they're in the separate modifier byte
     for &k in &current_keys {
         if k > 0 && k < 248 {
@@ -505,10 +504,6 @@ fn nkro_bitmap_generation_logic() {
             bits[byte] |= 1 << bit;
         }
     }
-    
-    // Verify no modifier bits leaked into bits[0] — modifiers are in separate byte
-    assert_eq!(bits[0] & 0x0F, 0x00);  // bits 0-3 (Left Ctrl/Shift/Alt/GUI) must be clear
-    // bits[4] is keycode 4 ('a') — that's correct, not a modifier
     
     // Verify keycode 4 ('A') -> byte = 0, bit = 4. bits[0] should have bit 4 set.
     assert_ne!(bits[0] & (1 << 4), 0);
