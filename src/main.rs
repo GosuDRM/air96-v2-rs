@@ -351,12 +351,17 @@ impl Device {
 }
 
 // ── I2C PWM flush macro ────────────────────────────────────────────
+// IS31FL3733 requires write-lock unlock (0xC5→0xFE) before page select.
 macro_rules! pwm_flush {
     ($rgb:expr, $i2c:expr) => {{
         let (b1, b2) = $rgb.build_pwm_buffers();
+        // Unlock + select PWM page (0x01)
+        let _ = $i2c.write(0x50, &[0xFE, 0xC5]);
         let _ = $i2c.write(0x50, &[0xFD, 0x01]);
         let _ = $i2c.write(0x50, &[0x00]);
         for chunk in b1.chunks(64) { let _ = $i2c.write(0x50, chunk); }
+        // Unlock + select PWM page again for second chip
+        let _ = $i2c.write(0x53, &[0xFE, 0xC5]);
         let _ = $i2c.write(0x53, &[0xFD, 0x01]);
         let _ = $i2c.write(0x53, &[0x00]);
         for chunk in b2.chunks(64) { let _ = $i2c.write(0x53, chunk); }
@@ -486,20 +491,41 @@ fn main() -> ! {
     let sda = cortex_m::interrupt::free(|cs| gpiob.pb9.into_alternate_af1(cs));
     let mut i2c = i2c::I2c::i2c1(dp.I2C1, (scl, sda), 1000.khz(), &mut rcc);
 
-    // ── IS31FL3733 init ─────────────────────────────────────────────
+    // ── IS31FL3733 init (QMK sequence: clear LEDs → clear PWM → config → enable → delay) ──
     for &addr in &[0x50u8, 0x53u8] {
-        // Function registers (page 3)
+        // Step 1: Clear LED control registers (page 0)
+        let _ = i2c.write(addr, &[0xFE, 0xC5]);
+        let _ = i2c.write(addr, &[0xFD, 0x00]);
+        for reg in 0x00u8..0x18 {
+            let _ = i2c.write(addr, &[reg, 0x00]);
+        }
+
+        // Step 2: Clear all PWM registers (page 1)
+        let _ = i2c.write(addr, &[0xFE, 0xC5]);
+        let _ = i2c.write(addr, &[0xFD, 0x01]);
+        let _ = i2c.write(addr, &[0x00]);
+        for _ in 0..192 {
+            let _ = i2c.write(addr, &[0x00]);
+        }
+
+        // Step 3: Configure function registers (page 3)
+        let _ = i2c.write(addr, &[0xFE, 0xC5]);
         let _ = i2c.write(addr, &[0xFD, 0x03]);
-        let _ = i2c.write(addr, &[0x00, 0x01]); // config: normal operation
+        let _ = i2c.write(addr, &[0x00, 0x01]); // Config: normal operation (bit 0 = disable shutdown)
         let _ = i2c.write(addr, &[0x01, 0xFF]); // GCC: max current
-        let _ = i2c.write(addr, &[0x0E, 0x01]); // SW pull-up
-        let _ = i2c.write(addr, &[0x0F, 0x01]); // CS pull-down
-        // LED on/off (page 0) — enable all channels
+        let _ = i2c.write(addr, &[0x0F, 0x00]); // SW pull-up: 0 Ohm (default)
+        let _ = i2c.write(addr, &[0x10, 0x00]); // CS pull-down: 0 Ohm (default)
+
+        // Step 4: Enable all LED channels (page 0)
+        let _ = i2c.write(addr, &[0xFE, 0xC5]);
         let _ = i2c.write(addr, &[0xFD, 0x00]);
         for reg in 0x00u8..0x18 {
             let _ = i2c.write(addr, &[reg, 0xFF]);
         }
     }
+
+    // Step 5: Wait 10ms for oscillator startup / chip wake-up
+    { let mut c = 10; while c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } c -= 1; } }
 
     // ── USB HID (wired mode) ────────────────────────────────────────
     let (usb_pa11, usb_pa12) = cortex_m::interrupt::free(|cs| {
