@@ -1,5 +1,15 @@
 # Changelog
 
+## v3.2.0 (2026-05-26)
+
+Critical fixes for typing latency, RGB matrix driver, and DFU bootloader jump.
+
+### Fixed
+
+- **Typing Latency** — Resolved the HAL timing calculation bug that throttled I2C to ~15.8 kHz. Enabled Fast-mode Plus (Fm+) high-drive strength on PB8/PB9/I2C1 and manually configured `TIMINGR` to 1 MHz. Optimized RGB matrix updates to track and write only dirty drivers (side LEDs on driver 2 do not trigger updates for driver 1).
+- **RGB Driver Corruption** — Fixed `pwm_flush!` macro and initialization loop to use single 193-byte I2C writes instead of fragmented single-byte/chunked writes, preventing register address corruption on the IS31FL3733.
+- **DFU Bootloader Jump** — Replaced SCB.vtor write (unsupported on Cortex-M0) with SYSCFG system memory remap to address `0x0000_0000` to correctly relocate the vector table.
+
 ## v3.0.5 (2026-05-26)
 
 DFU entry finally working — the VTOR register was never being pointed at the bootloader's vector table.

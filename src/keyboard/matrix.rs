@@ -265,13 +265,20 @@ impl Matrix {
         // Set CONTROL to 0 (privileged thread mode, MSP)
         core::arch::asm!("msr CONTROL, {r}", r = in(reg) 0u32);
 
-        // Point VTOR to bootloader's vector table
-        let cp = cortex_m::Peripherals::steal();
-        cp.SCB.vtor.write(0x1FFF_C800);
+        // Enable SYSCFG clock (RCC_APB2ENR bit 0)
+        const RCC_APB2ENR: *mut u32 = 0x4002_1018 as *mut u32;
+        RCC_APB2ENR.write_volatile(RCC_APB2ENR.read_volatile() | (1 << 0));
 
-        // Load bootloader's initial SP and reset vector
-        let sp = core::ptr::read_volatile(0x1FFF_C800 as *const u32);
-        let rv = core::ptr::read_volatile(0x1FFF_C804 as *const u32);
+        // Remap System Memory (bootloader) to 0x0000_0000 (SYSCFG_CFGR1 MEM_MODE = 0b01)
+        const SYSCFG_CFGR1: *mut u32 = 0x4001_0000 as *mut u32;
+        SYSCFG_CFGR1.write_volatile((SYSCFG_CFGR1.read_volatile() & !0b11) | 0b01);
+
+        cortex_m::asm::dsb();
+        cortex_m::asm::isb();
+
+        // Load bootloader's initial SP and reset vector (from remapped 0x0000_0000)
+        let sp = core::ptr::read_volatile(0x0000_0000 as *const u32);
+        let rv = core::ptr::read_volatile(0x0000_0004 as *const u32);
 
         // Set MSP then jump — never returns
         core::arch::asm!(

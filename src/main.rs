@@ -348,17 +348,29 @@ impl Device {
 // IS31FL3733 requires write-lock unlock (0xC5→0xFE) before page select.
 macro_rules! pwm_flush {
     ($rgb:expr, $i2c:expr) => {{
+        let d1 = $rgb.dirty1;
+        let d2 = $rgb.dirty2;
         let (b1, b2) = $rgb.build_pwm_buffers();
-        // Unlock + select PWM page (0x01)
-        let _ = $i2c.write(0x50, &[0xFE, 0xC5]);
-        let _ = $i2c.write(0x50, &[0xFD, 0x01]);
-        let _ = $i2c.write(0x50, &[0x00]);
-        for chunk in b1.chunks(64) { let _ = $i2c.write(0x50, chunk); }
-        // Unlock + select PWM page again for second chip
-        let _ = $i2c.write(0x53, &[0xFE, 0xC5]);
-        let _ = $i2c.write(0x53, &[0xFD, 0x01]);
-        let _ = $i2c.write(0x53, &[0x00]);
-        for chunk in b2.chunks(64) { let _ = $i2c.write(0x53, chunk); }
+
+        if d1 {
+            // Unlock + select PWM page (0x01)
+            let _ = $i2c.write(0x50, &[0xFE, 0xC5]);
+            let _ = $i2c.write(0x50, &[0xFD, 0x01]);
+            let mut tx_buf = [0u8; 193];
+            tx_buf[0] = 0x00;
+            tx_buf[1..].copy_from_slice(&b1);
+            let _ = $i2c.write(0x50, &tx_buf);
+        }
+
+        if d2 {
+            // Unlock + select PWM page again for second chip
+            let _ = $i2c.write(0x53, &[0xFE, 0xC5]);
+            let _ = $i2c.write(0x53, &[0xFD, 0x01]);
+            let mut tx_buf = [0u8; 193];
+            tx_buf[0] = 0x00;
+            tx_buf[1..].copy_from_slice(&b2);
+            let _ = $i2c.write(0x53, &tx_buf);
+        }
     }};
 }
 
@@ -480,10 +492,27 @@ fn main() -> ! {
         }};
     }
 
+    // ── Enable SYSCFG clock and configure Fm+ driving capability ──
+    unsafe {
+        let rcc_ptr = &*pac::RCC::ptr();
+        rcc_ptr.apb2enr.modify(|_, w| w.syscfgen().set_bit());
+    }
+    dp.SYSCFG.cfgr1.modify(|_, w| w
+        .i2c_pb8_fmp().set_bit()
+        .i2c_pb9_fmp().set_bit()
+        .i2c1_fmp().set_bit()
+    );
+
     // ── I2C: 1MHz for IS31FL3733 ────────────────────────────────────
     let scl = cortex_m::interrupt::free(|cs| gpiob.pb8.into_alternate_af1(cs));
     let sda = cortex_m::interrupt::free(|cs| gpiob.pb9.into_alternate_af1(cs));
     let mut i2c = i2c::I2c::i2c1(dp.I2C1, (scl, sda), 1000.khz(), &mut rcc);
+
+    // Overwrite the TIMINGR register with a correct 1 MHz setting for 8 MHz clock source
+    unsafe {
+        let i2c1 = &*pac::I2C1::ptr();
+        i2c1.timingr.write(|w| w.bits(0x00000204));
+    }
 
     // ── IS31FL3733 init (QMK sequence: clear LEDs → clear PWM → config → enable → delay) ──
     for &addr in &[0x50u8, 0x53u8] {
@@ -497,10 +526,9 @@ fn main() -> ! {
         // Step 2: Clear all PWM registers (page 1)
         let _ = i2c.write(addr, &[0xFE, 0xC5]);
         let _ = i2c.write(addr, &[0xFD, 0x01]);
-        let _ = i2c.write(addr, &[0x00]);
-        for _ in 0..192 {
-            let _ = i2c.write(addr, &[0x00]);
-        }
+        let mut clear_buf = [0u8; 193];
+        clear_buf[0] = 0x00; // register address
+        let _ = i2c.write(addr, &clear_buf);
 
         // Step 3: Configure function registers (page 3)
         let _ = i2c.write(addr, &[0xFE, 0xC5]);

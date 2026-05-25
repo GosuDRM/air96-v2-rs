@@ -162,8 +162,9 @@ pub const LED_MAP: [LedMapping; LED_COUNT] = [
 pub struct RgbMatrix {
     /// PWM buffer: [LED_COUNT][3] = RGB per LED (0-255)
     buffer: [[u8; 3]; LED_COUNT],
-    /// Dirty flag — true if buffer changed since last flush
-    dirty: bool,
+    /// Dirty flags for each driver chip
+    pub dirty1: bool,
+    pub dirty2: bool,
     /// Current mode
     pub mode: u8,
     /// Current hue (0-255)
@@ -184,7 +185,8 @@ impl RgbMatrix {
     pub fn new() -> Self {
         Self {
             buffer: [[0; 3]; LED_COUNT],
-            dirty: true,
+            dirty1: true,
+            dirty2: true,
             mode: 0,
             hue: 255,
             sat: 255,
@@ -201,7 +203,12 @@ impl RgbMatrix {
             let prev = self.buffer[index];
             if prev != [r, g, b] {
                 self.buffer[index] = [r, g, b];
-                self.dirty = true;
+                let map = &LED_MAP[index];
+                if map.driver == 0 {
+                    self.dirty1 = true;
+                } else {
+                    self.dirty2 = true;
+                }
             }
         }
     }
@@ -211,7 +218,8 @@ impl RgbMatrix {
         for led in &mut self.buffer {
             *led = [r, g, b];
         }
-        self.dirty = true;
+        self.dirty1 = true;
+        self.dirty2 = true;
     }
 
     /// Convert HSV to RGB and set all (port of rgb_matrix_sethsv)
@@ -224,7 +232,7 @@ impl RgbMatrix {
     }
 
     /// Check if dirty and needs I2C flush
-    pub fn needs_flush(&self) -> bool { self.dirty }
+    pub fn needs_flush(&self) -> bool { self.dirty1 || self.dirty2 }
 
     /// Build per-driver PWM buffers for batched I2C write.
     /// Returns (driver1_buffer, driver2_buffer) — each 192 bytes covering all PWM registers.
@@ -234,10 +242,6 @@ impl RgbMatrix {
         let mut buf1 = [0u8; 192];
         let mut buf2 = [0u8; 192];
 
-        if !self.dirty && !self.enabled {
-            return (buf1, buf2);
-        }
-
         for (i, led) in self.buffer.iter().enumerate() {
             let map = &LED_MAP[i];
             let buf = if map.driver == 0 { &mut buf1 } else { &mut buf2 };
@@ -245,7 +249,8 @@ impl RgbMatrix {
             buf[map.g as usize] = led[1];
             buf[map.b as usize] = led[2];
         }
-        self.dirty = false;
+        self.dirty1 = false;
+        self.dirty2 = false;
         (buf1, buf2)
     }
 
