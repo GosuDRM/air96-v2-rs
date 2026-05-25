@@ -183,6 +183,35 @@ pub struct RgbMatrix {
     pub enabled: bool,
     /// Suspend state
     pub suspended: bool,
+
+    // ── Reactive hit tracking (20-entry ring buffer) ──────────────
+    pub hit_count: u8,
+    pub hit_index: [u8; 20],
+    pub hit_x: [u8; 20],
+    pub hit_y: [u8; 20],
+    pub hit_tick: [u16; 20],
+
+    // ── Framebuffer for matrix effects (digital_rain, typing_heatmap) ─
+    pub frame_buffer: [[u8; 19]; 6],
+
+    // ── Digital rain state ────────────────────────────────────────
+    pub digital_rain_drop: u8,
+    pub digital_rain_decay: u8,
+
+    // ── Pixel flow state ──────────────────────────────────────────
+    pub pixel_flow_state: [(u8, u8, u8); LED_COUNT],
+    pub pixel_flow_wait_timer: u32,
+
+    // ── Pixel fractal state ───────────────────────────────────────
+    pub pixel_fractal_state: [[bool; 9]; 6], // [MATRIX_ROWS][MID_COL]
+    pub pixel_fractal_timer: u32,
+
+    // ── Pixel rain timer ──────────────────────────────────────────
+    pub pixel_rain_timer: u32,
+
+    // ── Typing heatmap state ──────────────────────────────────────
+    pub heatmap_decrease_timer: u16,
+    pub decrease_heatmap: bool,
 }
 
 impl RgbMatrix {
@@ -199,6 +228,21 @@ impl RgbMatrix {
             speed: 223, // QMK default: 255 - SPD_STEP*2 = 223
             enabled: true,
             suspended: false,
+            hit_count: 0,
+            hit_index: [0; 20],
+            hit_x: [0; 20],
+            hit_y: [0; 20],
+            hit_tick: [0; 20],
+            frame_buffer: [[0; 19]; 6],
+            digital_rain_drop: 0,
+            digital_rain_decay: 0,
+            pixel_flow_state: [(0, 0, 0); LED_COUNT],
+            pixel_flow_wait_timer: 0,
+            pixel_fractal_state: [[false; 9]; 6],
+            pixel_fractal_timer: 0,
+            pixel_rain_timer: 0,
+            heatmap_decrease_timer: 0,
+            decrease_heatmap: false,
         }
     }
 
@@ -239,6 +283,24 @@ impl RgbMatrix {
     /// Check if dirty and needs I2C flush
     pub fn needs_flush(&self) -> bool { self.dirty1 || self.dirty2 }
 
+    /// Register a key hit for reactive animations.
+    /// led_index: the LED index where the key is, or 0xFF if none.
+    /// anim_tick_at_press: the animation tick at which the press occurred.
+    pub fn register_hit(&mut self, led_index: u8, anim_tick_at_press: u16) {
+        if led_index == 0xFF { return; }
+        let led = led_index as usize;
+        if led < LED_COUNT {
+            let idx = self.hit_count as usize % 20;
+            self.hit_index[idx] = led_index;
+            self.hit_x[idx] = super::animation::LED_POSITIONS[led].0;
+            self.hit_y[idx] = super::animation::LED_POSITIONS[led].1;
+            // Store the absolute anim_tick at press time. Reactive effects
+            // compute elapsed = current_tick.wrapping_sub(stored_tick).
+            self.hit_tick[idx] = anim_tick_at_press;
+            self.hit_count = self.hit_count.wrapping_add(1);
+        }
+    }
+
     /// Advance animation by one tick and render to buffer (call every 10-50ms)
     pub fn tick_animation(&mut self) {
         animation::tick_animation(self);
@@ -246,8 +308,14 @@ impl RgbMatrix {
 
     /// Cycle to next animation mode
     pub fn next_mode(&mut self) {
-        self.mode = (self.mode + 1) % 10;
+        self.mode = (self.mode + 1) % animation::ANIMATION_COUNT;
         self.anim_tick = 0;
+        // Reset reactive hit tracking when changing modes
+        self.hit_count = 0;
+        // Reset framebuffer effects
+        self.frame_buffer = [[0; 19]; 6];
+        self.pixel_flow_state = [(0, 0, 0); LED_COUNT];
+        self.pixel_fractal_state = [[false; 9]; 6];
         self.dirty1 = true;
         self.dirty2 = true;
     }

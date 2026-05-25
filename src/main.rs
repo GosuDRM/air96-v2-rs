@@ -302,6 +302,16 @@ impl Device {
         // so that releasing Fn before the modified key still uses the Fn-layer keycode.
         let kc = if pressed {
             self.sleep.on_activity();
+
+            // Register hit for reactive RGB animations
+            let led_idx = led::animation::matrix_co_ordered(row as usize, (col as usize).min(18));
+            self.rgb.register_hit(led_idx, self.rgb.anim_tick);
+
+            // Register keypress for typing heatmap frame buffer
+            if self.rgb.mode == 48 {
+                led::animation::typing_heatmap_keypress(&mut self.rgb, row, col);
+            }
+
             let kc = resolve_keycode(&self.active_layers[..self.active_layer_count], ri, ci);
             self.keycode_track[ri][ci] = kc;
             kc
