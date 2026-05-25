@@ -270,11 +270,11 @@ use crate::config::eeprom;
     let mut p = UartProtocol::new(); p.bitkb_report_buf = [0; 32];
     let mut now = [0u8; 32]; now[2] = 0x01;
     assert!(p.auto_nkey_send(&now));
-    assert_eq!(p.bytekb_report_buf[2], 8);
+    assert_eq!(p.bytekb_report_buf[2], 16);
 }
 #[test] fn nkro_key_release_from_byte_buf() {
     let mut p = UartProtocol::new();
-    p.bytekb_report_buf[2] = 8; p.bitkb_report_buf[2] = 0x01;
+    p.bytekb_report_buf[2] = 16; p.bitkb_report_buf[2] = 0x01;
     let now = [0u8; 32];
     assert!(p.auto_nkey_send(&now));
     assert_eq!(p.bytekb_report_buf[2], 0);

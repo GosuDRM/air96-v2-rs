@@ -103,18 +103,24 @@ impl SleepManager {
                 // Wireless mode
                 if proto.rf_state == RfState::Connect {
                     self.rf_disconnect_time = 0;
+                    self.rf_linking_time = 0;
                     if self.no_act_time >= SLEEP_TIME_DELAY {
                         self.f_goto_sleep = true;
                     }
-                } else if self.rf_linking_time >= LINK_TIMEOUT {
-                    self.rf_linking_time = 0;
-                    self.f_goto_sleep = true;
+                } else if proto.rf_state == RfState::Linking || proto.rf_state == RfState::Pairing {
+                    if self.rf_linking_time >= LINK_TIMEOUT {
+                        self.rf_linking_time = 0;
+                        self.f_goto_sleep = true;
+                    }
                 } else if proto.rf_state == RfState::Disconnect {
+                    self.rf_linking_time = 0;
                     self.rf_disconnect_time += 1;
                     if self.rf_disconnect_time > 5 * 20 {
                         self.rf_disconnect_time = 0;
                         self.f_goto_sleep = true;
                     }
+                } else {
+                    self.rf_linking_time = 0;
                 }
             }
         }

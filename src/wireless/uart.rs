@@ -298,7 +298,7 @@ impl UartProtocol {
             f_byte_send = true;
         }
 
-        let mut key_code: u8 = 0;
+        let mut key_code: u8 = 8;
         for i in 1..32 {
             let change_mask = self.bitkb_report_buf[i] ^ now_bit_report[i];
             let mut offset_mask: u8 = 1;

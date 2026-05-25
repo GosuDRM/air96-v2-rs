@@ -366,7 +366,7 @@ impl SideLeds {
                 self.rf_blink_cnt -= 1;
                 self.rf_blink_timer = 0;
             }
-        } else if self.rf_link_show_time < 300 {
+        } else if self.rf_link_show_time < 3000 {
             // Show steady after blink
         } else {
             return; // Don't override — let side animation show
@@ -503,8 +503,8 @@ impl SideLeds {
         // 5. RF link indicator (left side override)
         self.rf_led_show(proto);
 
-        // M11 fix: rf_link_show_time increments every 10ms (matching C timer_pro)
-        self.rf_link_show_time = self.rf_link_show_time.saturating_add((elapsed_ms / 10) as u16);
+        // M11 fix: rf_link_show_time increments every 1ms
+        self.rf_link_show_time = self.rf_link_show_time.saturating_add(elapsed_ms as u16);
     }
 
     /// Trigger sleep indicator
