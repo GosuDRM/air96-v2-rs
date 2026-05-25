@@ -38,7 +38,7 @@ use crate::config::eeprom;
     assert_eq!(p.build_link_cmd(CMD_CLR_DEVICE), 6);
     assert_eq!(p.build_link_cmd(CMD_SET_CONFIG), 6);
     assert_eq!(p.build_link_cmd(CMD_RF_DFU), 6);
-    assert_eq!(p.build_link_cmd(CMD_READ_DATA), 8);
+    assert_eq!(p.build_link_cmd(CMD_READ_DATA), 5);
 }
 
 // ===== UART DISPATCH =====
@@ -50,7 +50,7 @@ use crate::config::eeprom;
 #[test] fn dispatch_handshake() { let mut p = UartProtocol::new(); p.dispatch_frame(CMD_HAND, &[]); assert!(p.f_rf_hand_ok); }
 #[test] fn dispatch_suspend() { let mut p = UartProtocol::new(); p.dispatch_frame(CMD_24G_SUSPEND, &[]); assert!(p.f_goto_sleep); }
 #[test] fn dispatch_read_data() {
-    let mut p = UartProtocol::new(); p.dispatch_frame(CMD_READ_DATA, &[1, 1, 2]);
+    let mut p = UartProtocol::new(); p.dispatch_frame(CMD_READ_DATA, &[0, 0, 0, 0, 1, 1, 2]);
     assert_eq!(p.link_mode, LinkMode::Bt1); assert_eq!(p.rf_channel, 1); assert_eq!(p.ble_channel, 2);
 }
 #[test] fn battery_not_overwritten() {

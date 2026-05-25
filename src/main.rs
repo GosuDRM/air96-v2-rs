@@ -463,8 +463,8 @@ fn main() -> ! {
             let wake = gpioc.pc4.into_push_pull_output(cs);
             let rst  = gpiob.pb4.into_push_pull_output(cs);
             let boot = gpiob.pb5.into_pull_up_input(cs);
-            let dev  = gpioc.pc0.into_floating_input(cs);
-            let sys  = gpioc.pc1.into_floating_input(cs);
+            let dev  = gpioc.pc0.into_pull_up_input(cs);  // C uses setPinInputHigh
+            let sys  = gpioc.pc1.into_pull_up_input(cs);  // C uses setPinInputHigh
             (dc, sdb1, sdb2, wake, rst, boot, dev, sys)
         });
 
@@ -620,14 +620,24 @@ fn main() -> ! {
     // ── Matrix pin init ──────────────────────────────────────────────
     unsafe { Matrix::init_pins(); }
 
-    // ── Startup: 100ms delay (L1 fix) ────────────────────────────────
-    { let mut c = 100; while c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } c -= 1; } }
+    // ── Startup: 500ms delay (C: wait_ms(500) before RF init) ────────
+    { let mut c = 500; while c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } }
 
-    // ── RF module init ───────────────────────────────────────────────
+    // ── RF module init with retries (C: 10 retries per command) ─────
     for &cmd in &[CMD_HAND, CMD_READ_DATA, CMD_RF_STS_SYSC] {
-        dev.proto.build_link_cmd(cmd);
-        uart_flush!(&dev.proto);
-        { let mut c = 5; while c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } c -= 1; } }
+        for _ in 0..10u8 {
+            dev.proto.build_link_cmd(cmd);
+            uart_flush!(&dev.proto);
+            // 20ms wait with UART RX (C: wait_ms(5) then uart_receive_pro twice)
+            { let mut rc = 20u32; while rc > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } rc -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } }
+            // Check if ACK received (C: checks f_rf_hand_ok / f_rf_read_data_ok / f_rf_sts_sysc_ok)
+            let ok = match cmd {
+                CMD_HAND => dev.proto.f_rf_hand_ok,
+                CMD_READ_DATA => dev.proto.f_rf_read_data_ok,
+                _ => dev.proto.f_rf_sts_sysc_ok,
+            };
+            if ok { break; }
+        }
     }
     dev.proto.build_link_cmd(CMD_SET_NAME);
     uart_flush!(&dev.proto);

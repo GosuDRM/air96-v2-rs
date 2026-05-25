@@ -234,8 +234,8 @@ impl UartProtocol {
             }
             CMD_RF_DFU => self.build_cmd(cmd, &[0]),
             CMD_READ_DATA => {
-                // FUNC_VALID_LEN = 32
-                self.build_cmd(cmd, &[0x00, 32, 32]) // offset, len, valid_len
+                // C: no custom handler in uart_send_cmd switch — sent with zero payload
+                self.build_cmd(cmd, &[])
             }
             CMD_SET_NAME => {
                 // Format: [ID=1, len, "name\0"]
@@ -417,15 +417,16 @@ impl UartProtocol {
                 self.f_rf_sts_sysc_ok = true;
             }
             CMD_READ_DATA => {
-                if data.len() >= 3 {
-                    if data[0] <= LinkMode::Usb as u8 {
-                        self.link_mode = LinkMode::from_u8(data[0]);
+                // C firmware: memcpy(func_tab, &RXDBuf[4], 32) then reads func_tab[4..6]
+                if data.len() >= 7 {
+                    if data[4] <= LinkMode::Usb as u8 {
+                        self.link_mode = LinkMode::from_u8(data[4]);
                     }
-                    if data[1] < LinkMode::Usb as u8 {
-                        self.rf_channel = data[1];
+                    if data[5] < LinkMode::Usb as u8 {
+                        self.rf_channel = data[5];
                     }
-                    if data[2] >= LinkMode::Bt1 as u8 && data[2] <= LinkMode::Bt3 as u8 {
-                        self.ble_channel = data[2];
+                    if data[6] >= LinkMode::Bt1 as u8 && data[6] <= LinkMode::Bt3 as u8 {
+                        self.ble_channel = data[6];
                     }
                 }
                 self.f_rf_read_data_ok = true;
