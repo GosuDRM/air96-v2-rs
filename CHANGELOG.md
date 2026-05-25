@@ -1,5 +1,16 @@
 # Changelog
 
+## v3.8.7 (2026-05-26)
+
+Fixed hotkey behavior to match the C firmware 1:1.
+
+### Fixed
+
+- **MAC_SEARCH / MAC_PRT / MAC_PRTA Tap Behavior** — Changed from hold-release to tap-only (press+immediate release) to match the C firmware's `register_code`/`unregister_code` pattern.
+- **Win Fn Layer Keymap** — Fixed row 0 col 14 from `KC_MAC_PRT` (full screenshot) to `KC_MAC_PRTA` (area screenshot) to match the C firmware.
+- **DEV_RESET Key Break** — Added `break_all_keys()` call on DEV_RESET press to match C firmware behavior.
+- **DEV_RESET Long Press 2.4GHz Preservation** — Added inner guard `if link_mode != Rf24` so device reset preserves the 2.4GHz RF mode instead of always resetting to BT1.
+
 ## v3.8.6 (2026-05-26)
 
 Fixed wireless mode issues (Bluetooth pairing, channel switching, wireless switch button, 2.4GHz).

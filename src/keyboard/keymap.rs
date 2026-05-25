@@ -190,8 +190,8 @@ pub const LAYER_WIN: [[u16; 21]; 6] = [
 // LAYER 3: Win Fn
 // ═══════════════════════════════════════════════════════════════════
 pub const LAYER_WIN_FN: [[u16; 21]; 6] = [
-    // Row 0: __, __, BRID, BRIU, __, __, __, __, MPRV, MPLY, MNXT, MUTE, VOLD, VOLU, MAC_PRT
-    [NR, NR, KC_BRID, KC_BRIU, NR, NR, NR, NR, KC_MPRV, KC_MPLY, KC_MNXT, KC_MUTE, KC_VOLD, KC_VOLU, KC_MAC_PRT,
+    // Row 0: __, __, BRID, BRIU, __, __, __, __, MPRV, MPLY, MNXT, MUTE, VOLD, VOLU, MAC_PRTA
+    [NR, NR, KC_BRID, KC_BRIU, NR, NR, NR, NR, KC_MPRV, KC_MPLY, KC_MNXT, KC_MUTE, KC_VOLD, KC_VOLU, KC_MAC_PRTA,
      NR, NR, NR, NR, NR, NR],
     // Row 1: same as Mac Fn (link keys on 1-4)
     [NR, KC_LNK_BLE1, KC_LNK_BLE2, KC_LNK_BLE3, KC_LNK_RF, NR, NR, NR, NR, NR, NR, NR, NR, NR,

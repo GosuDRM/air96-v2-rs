@@ -203,7 +203,14 @@ impl Device {
             keymap::KC_SIDE_SPD => {
                 if pressed { self.side.speed = self.side.speed.saturating_sub(1); self.save_config(); }
             },
-            keymap::KC_DEV_RESET => self.dev_reset_press = pressed,
+            keymap::KC_DEV_RESET => {
+                if pressed {
+                    self.dev_reset_press = true;
+                    self.break_all_keys();
+                } else {
+                    self.dev_reset_press = false;
+                }
+            }
             keymap::KC_SLEEP_MODE => {
                 if pressed { self.sleep_enabled = !self.sleep_enabled; self.f_sleep_show = true; self.save_config(); }
             }
@@ -242,10 +249,10 @@ impl Device {
             }
             keymap::KC_MAC_SEARCH => {
                 if pressed {
+                    // Tap: LGUI+Space press then immediate release (matches C register_code/unregister_code)
                     self.current_mods |= 0x08;
                     self.current_keys[0] = 0x2C;
                     report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
-                } else {
                     self.current_mods &= !0x08;
                     self.current_keys[0] = 0;
                     report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
@@ -280,10 +287,10 @@ impl Device {
             }
             keymap::KC_MAC_PRT => {
                 if pressed {
+                    // Tap: LGUI+LSFT+3 press then immediate release
                     self.current_mods |= 0x08 | 0x02;
                     self.current_keys[0] = 0x20;
                     report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
-                } else {
                     self.current_mods &= !(0x08 | 0x02);
                     self.current_keys[0] = 0;
                     report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
@@ -291,6 +298,7 @@ impl Device {
             }
             keymap::KC_MAC_PRTA => {
                 if pressed {
+                    // Tap: LGUI+LSFT+S (nkro) or LGUI+LSFT+4 (non-nkro)
                     self.current_mods |= 0x08 | 0x02;
                     if self.nkro_enabled {
                         self.current_keys[0] = 0x16;
@@ -298,7 +306,6 @@ impl Device {
                         self.current_keys[0] = 0x23;
                     }
                     report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
-                } else {
                     self.current_mods &= !(0x08 | 0x02);
                     self.current_keys[0] = 0;
                     report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
@@ -913,9 +920,11 @@ fn main() -> ! {
                     if dev.dev_reset_press_delay >= 60 {
                         dev.dev_reset_press = false;
                         if dev.proto.link_mode != LinkMode::Usb {
-                            dev.proto.link_mode = LinkMode::Bt1;
-                            dev.proto.ble_channel = 1;
-                            dev.proto.rf_channel = 1;
+                            if dev.proto.link_mode != LinkMode::Rf24 {
+                                dev.proto.link_mode = LinkMode::Bt1;
+                                dev.proto.ble_channel = 1;
+                                dev.proto.rf_channel = 1;
+                            }
                         } else {
                             dev.proto.ble_channel = 1;
                             dev.proto.rf_channel = 1;
