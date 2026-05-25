@@ -88,7 +88,13 @@ struct Device {
     /// Pending consumer usage for USB HID (0=none)
     pending_consumer_usb: u16,
     /// Pending system control usage for USB HID (0=none)
-    pending_system_usb: u8,
+    pending_system_usb: u16,
+    /// Dial switch debounce: blocks changes until stable for 500ms
+    f_dial_sw_init_ok: bool,
+    dial_dev_debounce: u16,
+    dial_sys_debounce: u16,
+    dial_dev_last: bool,
+    dial_sys_last: bool,
 }
 
 impl Device {
@@ -116,6 +122,11 @@ impl Device {
             rgb_test_phase: 0, rgb_test_timer: 0,
             pending_consumer_usb: 0,
             pending_system_usb: 0,
+            f_dial_sw_init_ok: false,
+            dial_dev_debounce: 0,
+            dial_sys_debounce: 0,
+            dial_dev_last: false,
+            dial_sys_last: false,
         }
     }
 
@@ -249,7 +260,7 @@ impl Device {
             keymap::KC_MAC_DND => {
                 if pressed {
                     report::send_system(&mut self.proto, 0x009B);
-                    self.pending_system_usb = 0x9B;
+                    self.pending_system_usb = 0x009B;
                 } else {
                     report::send_system(&mut self.proto, 0);
                     self.pending_system_usb = 0;
@@ -355,6 +366,28 @@ impl Device {
         }
 
         report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
+        // Send NKRO report when enabled (wireless only, USB does 6KRO boot protocol)
+        if self.nkro_enabled && self.proto.link_mode != LinkMode::Usb {
+            let mut bits = [0u8; 32];
+            // Modifier bits in byte 0
+            if self.current_mods & 0x01 != 0 { bits[0] |= 0x01; } // Left Ctrl
+            if self.current_mods & 0x02 != 0 { bits[0] |= 0x02; } // Left Shift
+            if self.current_mods & 0x04 != 0 { bits[0] |= 0x04; } // Left Alt
+            if self.current_mods & 0x08 != 0 { bits[0] |= 0x08; } // Left GUI
+            if self.current_mods & 0x10 != 0 { bits[0] |= 0x10; } // Right Ctrl
+            if self.current_mods & 0x20 != 0 { bits[0] |= 0x20; } // Right Shift
+            if self.current_mods & 0x40 != 0 { bits[0] |= 0x40; } // Right Alt
+            if self.current_mods & 0x80 != 0 { bits[0] |= 0x80; } // Right GUI
+            // Keycode bits in bytes 1-31 (keycodes 0-247)
+            for &k in &self.current_keys {
+                if k > 0 && k < 248 {
+                    let byte = (k as usize / 8) + 1;
+                    let bit = k as usize % 8;
+                    bits[byte] |= 1 << bit;
+                }
+            }
+            report::send_nkro(&mut self.proto, &bits);
+        }
     }
 }
 
@@ -615,6 +648,10 @@ fn main() -> ! {
             dev.active_layers[0] = 2;
             dev.nkro_enabled = true;
         }
+        // Track initial stable state for debounce in main loop
+        dev.dial_dev_last = dial_dev;
+        dev.dial_sys_last = dial_sys;
+        dev.f_dial_sw_init_ok = true;
     }
 
     // ── Matrix pin init ──────────────────────────────────────────────
@@ -708,45 +745,73 @@ fn main() -> ! {
 
         // ── USB HID poll ──────────────────────────────────────────
         let _usb_configured = usb_hid.poll();
+        let keyboard_leds = usb_hid.host_led_state();
 
-        // ── Dial switch read ──────────────────────────────────────
-        let dev_now = dev_mode.is_high().unwrap_or(false);
-        let sys_now = sys_mode.is_high().unwrap_or(false);
+        // ── Dial switch read (debounced: 500ms stable before acting) ──
+        if dev.f_dial_sw_init_ok {
+            let dev_now = dev_mode.is_high().unwrap_or(false);
+            let sys_now = sys_mode.is_high().unwrap_or(false);
 
-        if sys_now {
-            if dev.proto.sys_sw_state != 0xA2 {
-                dev.proto.sys_sw_state = 0xA2;
-                dev.active_layers[0] = 0;
-                dev.nkro_enabled = false;
-                dev.break_all_keys();
-                dev.side.show_sys();
-                // USB: send empty report after mode switch
-                if dev.proto.link_mode == LinkMode::Usb { usb_hid.release_all(); }
+            // Debounce DEV dial switch
+            if dev_now != dev.dial_dev_last {
+                dev.dial_dev_debounce = 0;
+                dev.dial_dev_last = dev_now;
+            } else {
+                if dev.dial_dev_debounce < 500 {
+                    dev.dial_dev_debounce += 1;
+                }
             }
-        } else {
-            if dev.proto.sys_sw_state != 0xA1 {
-                dev.proto.sys_sw_state = 0xA1;
-                dev.active_layers[0] = 2;
-                dev.nkro_enabled = true;
-                dev.break_all_keys();
-                dev.side.show_sys();
-                if dev.proto.link_mode == LinkMode::Usb { usb_hid.release_all(); }
-            }
-        }
 
-        if dev_now {
-            if dev.proto.link_mode != LinkMode::Usb {
-                dev.proto.link_mode = LinkMode::Usb;
-                dev.break_all_keys();
-                usb_hid.release_all();
-                dev.proto.f_send_channel = true;
+            // Debounce SYS dial switch
+            if sys_now != dev.dial_sys_last {
+                dev.dial_sys_debounce = 0;
+                dev.dial_sys_last = sys_now;
+            } else {
+                if dev.dial_sys_debounce < 500 {
+                    dev.dial_sys_debounce += 1;
+                }
             }
-        } else {
-            let desired_ch = dev.proto.rf_channel;
-            if dev.proto.link_mode as u8 != desired_ch {
-                dev.proto.link_mode = LinkMode::from_u8(desired_ch);
-                dev.break_all_keys();
-                dev.proto.f_send_channel = true;
+
+            // Act on stable DEV state (>=500ms)
+            if dev.dial_dev_debounce >= 500 {
+                if dev.dial_dev_last {
+                    if dev.proto.link_mode != LinkMode::Usb {
+                        dev.proto.link_mode = LinkMode::Usb;
+                        dev.break_all_keys();
+                        usb_hid.release_all();
+                        dev.proto.f_send_channel = true;
+                    }
+                } else {
+                    let desired_ch = dev.proto.rf_channel;
+                    if dev.proto.link_mode as u8 != desired_ch {
+                        dev.proto.link_mode = LinkMode::from_u8(desired_ch);
+                        dev.break_all_keys();
+                        dev.proto.f_send_channel = true;
+                    }
+                }
+            }
+
+            // Act on stable SYS state (>=500ms)
+            if dev.dial_sys_debounce >= 500 {
+                if dev.dial_sys_last {
+                    if dev.proto.sys_sw_state != 0xA2 {
+                        dev.proto.sys_sw_state = 0xA2;
+                        dev.active_layers[0] = 0;
+                        dev.nkro_enabled = false;
+                        dev.break_all_keys();
+                        dev.side.show_sys();
+                        if dev.proto.link_mode == LinkMode::Usb { usb_hid.release_all(); }
+                    }
+                } else {
+                    if dev.proto.sys_sw_state != 0xA1 {
+                        dev.proto.sys_sw_state = 0xA1;
+                        dev.active_layers[0] = 2;
+                        dev.nkro_enabled = true;
+                        dev.break_all_keys();
+                        dev.side.show_sys();
+                        if dev.proto.link_mode == LinkMode::Usb { usb_hid.release_all(); }
+                    }
+                }
             }
         }
 
@@ -939,7 +1004,8 @@ fn main() -> ! {
         }
 
         // ── Side LED update ─────────────────────────────────────────
-        dev.side.update(&dev.proto, 1, false);
+        let caps_lock = (keyboard_leds & 0x02) != 0;
+        dev.side.update(&dev.proto, 1, caps_lock);
         for i in 0..10 {
             let [r, g, b] = dev.side.output[i];
             dev.rgb.set_color(100 + i, r, g, b);
