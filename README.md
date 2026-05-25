@@ -16,12 +16,15 @@ bug/latency/optimization fixes applied and new features added.
 
 ## 🔔 What's New
 
-- 🔌 **Wired USB mode** — composite HID with keyboard, consumer control (media/volume/brightness), and system control (DND/sleep). Works on Windows, Linux, and macOS without drivers.
-- ⌨️ **14 new keycodes** — media keys (play, volume, mute, brightness) and RGB matrix controls (speed, hue, brightness, mode) now fully functional in both wired and wireless modes.
-- 🐛 **All 29 C firmware audit fixes applied** — wireless latency reduced, protocol bugs fixed, code optimised.
-- ⚡ **Non-blocking main loop** — SysTick-driven 1 ms tick replaces QMK's timer-based polling.
+- 🔌 **Wired USB with NKRO** — composite HID (keyboard + consumer + system control), N-key rollover via combined descriptor, Caps Lock LED state. VID:PID `0x19F5:0x3266`.
+- 📡 **Wireless Bluetooth + 2.4 GHz** — full NRF52832 UART protocol, both modes working end-to-end.
+- ⚡ **0.5-1ms keystroke latency** — symmetric eager per-key lockout debouncing (QMK `sym_eager_pk`).
+- 🎨 **50 RGB matrix animation modes** — full 1:1 QMK animation port (WIP, some modes unstable).
+- 🐛 **All 29 C firmware audit fixes applied** — wireless latency, protocol bugs, code optimisations.
+- 🔄 **DFU bootloader** — QMK magic+reset pattern via RTC backup register, Escape-key entry.
 - 💾 **EEPROM config persistence** — side LED mode/brightness/speed/colour and sleep settings survive power cycles.
-- 🧪 **82 unit tests** — UART protocol, keymap engine, reports, sleep manager, LED tables, RGB driver, EEPROM, USB HID descriptors.
+- 🧪 **84 unit tests** — UART protocol, keymap engine, reports, sleep manager, LED tables, RGB driver, EEPROM, USB HID descriptors.
+- 🦀 **Zero Clippy warnings** — clean `thumbv6m-none-eabi` and `x86_64-unknown-linux-gnu` builds.
 
 [Full changelog →](CHANGELOG.md)
 
