@@ -1024,7 +1024,7 @@ fn main() -> ! {
         rgb_anim_timer += 1;
         if rgb_anim_timer >= 20 {
             rgb_anim_timer = 0;
-            dev.rgb.tick_animation();
+            // dev.rgb.tick_animation();  // disabled for debug
         }
 
         // ── BAT_NUM ──────────────────────────────────────────────────
