@@ -622,6 +622,12 @@ fn main() -> ! {
     dev.proto.build_link_cmd(CMD_SET_24G_NAME);
     uart_flush!(&dev.proto);
 
+    // ── Send CMD_SET_LINK to configure NRF for initial wireless mode ──
+    if dev.proto.link_mode != LinkMode::Usb {
+        dev.proto.build_link_cmd(CMD_SET_LINK);
+        uart_flush!(&dev.proto);
+    }
+
     // ── Main loop ────────────────────────────────────────────────────
     let mut t10: u32 = 0;
     let mut rgb_flush_timer: u32 = 0;
@@ -708,12 +714,14 @@ fn main() -> ! {
                 dev.proto.link_mode = LinkMode::Usb;
                 dev.break_all_keys();
                 usb_hid.release_all();
+                dev.proto.f_send_channel = true;
             }
         } else {
             let desired_ch = dev.proto.rf_channel;
             if dev.proto.link_mode as u8 != desired_ch {
                 dev.proto.link_mode = LinkMode::from_u8(desired_ch);
                 dev.break_all_keys();
+                dev.proto.f_send_channel = true;
             }
         }
 
