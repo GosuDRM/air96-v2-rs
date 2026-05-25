@@ -10,6 +10,9 @@
 
 use stm32f0xx_hal::pac;
 
+/// Magic value written to RTC backup register for DFU entry
+const DFU_MAGIC: u32 = 0xDF0DF0DF;
+
 /// Port + pin number pair for raw register access
 #[derive(Clone, Copy)]
 struct GpioPin {
@@ -213,32 +216,64 @@ impl Matrix {
         true
     }
 
-    /// Jump to STM32F072 ROM bootloader (USB DFU, 0483:DF11).
-    /// Canonical approach: disable interrupts, set VTOR to system memory
-    /// (0x1FFF_C800), load bootloader's stack pointer and entry address,
-    /// reset peripherals to clean state, then jump.
+    /// Write DFU magic to RTC backup register then trigger system reset.
+    /// On next boot, check_dfu_magic_and_jump() detects the magic and
+    /// performs a clean jump to the ROM bootloader.
+    /// This is the QMK stm32_dfu pattern — survives system reset.
     pub unsafe fn enter_bootloader() -> ! {
         cortex_m::interrupt::disable();
 
-        // Disable SysTick (set all bits to 0 in CSR)
+        // Enable PWR clock (RCC_APB1ENR bit 28) and backup domain (PWR_CR.DBP = bit 8)
+        const RCC_APB1ENR: *mut u32 = 0x4002_101C as *mut u32;
+        RCC_APB1ENR.write_volatile(RCC_APB1ENR.read_volatile() | (1 << 28));
+
+        const PWR_CR: *mut u32 = 0x4000_7000 as *mut u32;
+        PWR_CR.write_volatile(PWR_CR.read_volatile() | (1 << 8));
+
+        // Write magic value to RTC backup register 0 (offset 0x50 from RTC base 0x40002800)
+        const RTC_BKP0R: *mut u32 = 0x4000_2850 as *mut u32;
+        RTC_BKP0R.write_volatile(DFU_MAGIC);
+
+        // System reset — RAM and RTC backup registers survive
+        cortex_m::peripheral::SCB::sys_reset();
+    }
+
+    /// Full-cleanup jump to STM32F072 ROM bootloader (0483:DF11).
+    /// Disables all NVIC interrupts, clears pending flags, resets SysTick,
+    /// points VTOR to system memory (0x1FFF_C800), sets MSP and jumps.
+    /// Must only be called from check_dfu_magic_and_jump() at boot.
+    pub unsafe fn jump_to_bootloader() -> ! {
+        // Disable interrupts globally
+        cortex_m::interrupt::disable();
+
+        // Disable SysTick
         (0xE000_E010 as *mut u32).write_volatile(0);
 
-        // Reset GPIOA so USB pins (PA11/PA12) are in their default state
-        // AHBRSTR: write 1 to GPIOARST bit (17), hardware auto-clears
+        // Reset GPIOA so USB pins (PA11/PA12) are in default state
         const RCC_AHBRSTR: *mut u32 = 0x4002_1028 as *mut u32;
-        RCC_AHBRSTR.write_volatile(1 << 17);  // set GPIOARST
-        RCC_AHBRSTR.write_volatile(0);         // clear (hardware may have already)
+        RCC_AHBRSTR.write_volatile(1 << 17);  // GPIOARST
+        RCC_AHBRSTR.write_volatile(0);
 
-        // Point VTOR to bootloader's vector table (critical — bootloader uses USB IRQs)
+        // Clear ALL NVIC interrupt enables and pending flags (QMK pattern)
+        // NVIC_ICER: 0xE000E180-0xE000E19C (8 registers for up to 240 IRQs)
+        // NVIC_ICPR: 0xE000E280-0xE000E29C
+        for i in 0..8u32 {
+            (0xE000_E180 as *mut u32).add(i as usize).write_volatile(0xFFFF_FFFF);
+            (0xE000_E280 as *mut u32).add(i as usize).write_volatile(0xFFFF_FFFF);
+        }
+
+        // Set CONTROL to 0 (privileged thread mode, MSP)
+        core::arch::asm!("msr CONTROL, {r}", r = in(reg) 0u32);
+
+        // Point VTOR to bootloader's vector table
         let cp = cortex_m::Peripherals::steal();
         cp.SCB.vtor.write(0x1FFF_C800);
 
-        // Load bootloader's initial stack pointer (first word of vector table)
+        // Load bootloader's initial SP and reset vector
         let sp = core::ptr::read_volatile(0x1FFF_C800 as *const u32);
-        // Load bootloader's reset vector (second word of vector table)
         let rv = core::ptr::read_volatile(0x1FFF_C804 as *const u32);
 
-        // Set MSP to bootloader's stack, then jump to bootloader entry
+        // Set MSP then jump — never returns
         core::arch::asm!(
             "msr MSP, {sp}",
             "bx {rv}",

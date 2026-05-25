@@ -363,8 +363,44 @@ macro_rules! pwm_flush {
     }};
 }
 
+// ── DFU magic check (QMK stm32_dfu pattern) ──────────────────────────
+// Called at the VERY start of main(). Checks RTC backup register for
+// DFU magic. If set, clears it and jumps to ROM bootloader.
+// The magic is written by enter_bootloader() before a system reset.
+const DFU_MAGIC: u32 = 0xDF0DF0DF;
+
+fn check_dfu_magic_and_jump() {
+    // Enable PWR clock (RCC_APB1ENR bit 28)
+    const RCC_APB1ENR: *mut u32 = 0x4002_101C as *mut u32;
+    unsafe {
+        RCC_APB1ENR.write_volatile(RCC_APB1ENR.read_volatile() | (1 << 28));
+    }
+
+    // Enable backup domain access (PWR_CR.DBP = bit 8)
+    const PWR_CR: *mut u32 = 0x4000_7000 as *mut u32;
+    unsafe {
+        PWR_CR.write_volatile(PWR_CR.read_volatile() | (1 << 8));
+    }
+
+    // Read RTC backup register 0
+    const RTC_BKP0R: *const u32 = 0x4000_2850 as *const u32;
+    let magic = unsafe { RTC_BKP0R.read_volatile() };
+
+    if magic == DFU_MAGIC {
+        // Clear the magic so we don't DFU-loop
+        unsafe { (RTC_BKP0R as *mut u32).write_volatile(0); }
+        // Full-cleanup jump to ROM bootloader
+        unsafe { keyboard::matrix::Matrix::jump_to_bootloader(); }
+    }
+}
+
 #[entry]
 fn main() -> ! {
+    // ── DFU magic check — must be FIRST before any init ──────────
+    // QMK pattern: write magic to RTC backup register, system reset,
+    // check magic on next boot, jump to ROM bootloader with full cleanup.
+    check_dfu_magic_and_jump();
+
     let mut dp = pac::Peripherals::take().unwrap();
     let mut cp = CorePeripherals::take().unwrap();
     let mut rcc = dp.RCC.configure()
