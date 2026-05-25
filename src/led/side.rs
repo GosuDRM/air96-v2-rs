@@ -194,6 +194,7 @@ pub struct SideLeds {
     sys_show_timer: u32,
     sleep_show_flag: bool,
     sleep_show_timer: u32,
+    sleep_enabled: bool,
 
     /// Output buffer: per-LED RGB to be written to the RGB matrix
     pub output: [[u8; 3]; 10],
@@ -211,7 +212,7 @@ impl SideLeds {
             rf_blink_cnt: 0, rf_blink_timer: 0, rf_link_show_time: 0,
             link_state_temp: 0xFF,
             sys_show_flag: false, sys_show_timer: 0,
-            sleep_show_flag: false, sleep_show_timer: 0,
+            sleep_show_flag: false, sleep_show_timer: 0, sleep_enabled: true,
             output: [[0; 3]; 10],
         }
     }
@@ -226,14 +227,13 @@ impl SideLeds {
         for i in 5..10 { self.output[i] = [r, g, b]; }
     }
 
-    /// Apply light table gamma curve (port of count_rgb_light, side.c:334-346)
-    /// Uses LIGHT_VALUE_TAB for proper non-linear gamma correction.
-    fn apply_light(r: u8, g: u8, b: u8, light_table_idx: u8) -> (u8, u8, u8) {
-        let idx = (light_table_idx as usize).min(LIGHT_VALUE_TAB.len() - 1);
-        let lt = LIGHT_VALUE_TAB[idx] as u16;
-        ((r as u16 * lt / 255) as u8,
-         (g as u16 * lt / 255) as u8,
-         (b as u16 * lt / 255) as u8)
+    /// Apply brightness scaling (port of count_rgb_light, side.c:334-346)
+    /// C formula: component * (light_temp + 1) >> 8
+    fn apply_light(r: u8, g: u8, b: u8, light_temp: u8) -> (u8, u8, u8) {
+        let scale = (light_temp as u16 + 1) as u16;
+        ((r as u16 * scale >> 8) as u8,
+         (g as u16 * scale >> 8) as u8,
+         (b as u16 * scale >> 8) as u8)
     }
 
     /// Point advance helper (port of light_point_playing)
@@ -438,14 +438,13 @@ impl SideLeds {
     }
 
     fn bat_percent_led(&mut self, percent: u8) {
-        let (r, g, b) = if percent <= 15 {
-            (0xFF, 0x00, 0x00)
-        } else if percent <= 50 {
-            (0xFF, 0x40, 0x00)
-        } else if percent <= 80 {
-            (0xFF, 0xFF, 0x00)
+        // C firmware color scheme: (128,0,0) red ≤20%, (128,64,0) orange 21-95%, (0,128,0) green >95%
+        let (r, g, b) = if percent <= 20 {
+            (128, 0, 0)
+        } else if percent <= 95 {
+            (128, 64, 0)
         } else {
-            (0x00, 0xFF, 0x00)
+            (0, 128, 0)
         };
         let end = if percent <= 20 { 0 } else if percent <= 30 { 1 } else if percent <= 50 { 2 } else if percent <= 70 { 3 } else if percent <= 95 { 4 } else { 4 };
         for i in 0..=end {
@@ -494,6 +493,17 @@ impl SideLeds {
             if self.sys_show_timer >= 3000 { self.sys_show_flag = false; }
         }
 
+        // 4. Sleep indicator (right side, 500ms blink, 3000ms duration)
+        if self.sleep_show_flag {
+            let (r, g, b) = if self.sleep_enabled { (0x00, 0x80, 0x00) } else { (0x80, 0x00, 0x00) };
+            if (self.sleep_show_timer / 500) % 2 == 0 {
+                self.set_right(r, g, b);
+            } else {
+                self.set_right(0, 0, 0);
+            }
+            if self.sleep_show_timer >= 3000 { self.sleep_show_flag = false; }
+        }
+
         // 4. Caps Lock indicator (left side override)
         // M16: use rf_led bit 0x02 for caps lock detection
         if caps_lock || (proto.rf_led & 0x02) != 0 {
@@ -508,7 +518,8 @@ impl SideLeds {
     }
 
     /// Trigger sleep indicator
-    pub fn show_sleep(&mut self, _enabled: bool) {
+    pub fn show_sleep(&mut self, enabled: bool) {
+        self.sleep_enabled = enabled;
         self.sleep_show_flag = true;
         self.sleep_show_timer = 0;
     }
