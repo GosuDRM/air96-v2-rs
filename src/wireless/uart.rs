@@ -238,7 +238,9 @@ impl UartProtocol {
                 self.build_cmd(cmd, &[0x00, 32, 32]) // offset, len, valid_len
             }
             CMD_SET_NAME => {
-                let name = b"\x01\x0FNuPhy Air96 V2"; // id=1, len=15, "NuPhy Air96 V2"
+                // Format: [ID=1, len, "name\0"]
+                // C firmware sends 17 bytes: ID(1) + len(15) + "NuPhy Air96 V2\0"
+                let name = b"\x01\x0AAir96 V2\x00";
                 self.tx_buf = [0; UART_MAX_LEN];
                 self.tx_buf[0] = UART_HEAD;
                 self.tx_buf[1] = cmd;
@@ -249,8 +251,8 @@ impl UartProtocol {
                 name.len() + 5
             }
             CMD_SET_24G_NAME => {
-                // 44-byte name with interleaved nulls: valid_len + fixed + "NuPhy Air96 V2 Dongle"
-                let raw = b"\x2C\x03N\x00u\x00P\x00h\x00y\x00 \x00A\x00i\x00r\x009\x006\x00 \x00V\x002\x00 \x00D\x00o\x00n\x00g\x00l\x00e\x00";
+                // 44-byte name with interleaved nulls: valid_len + fixed + "Air96 V2 Dongle"
+                let raw = b"\x2C\x03A\x00i\x00r\x009\x006\x00 \x00V\x002\x00 \x00D\x00o\x00n\x00g\x00l\x00e\x00";
                 let len = raw.len();
                 self.tx_buf = [0; UART_MAX_LEN];
                 self.tx_buf[0] = UART_HEAD;

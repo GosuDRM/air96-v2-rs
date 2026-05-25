@@ -34,7 +34,7 @@ impl<'a> UsbHid<'a> {
         let device = UsbDeviceBuilder::new(bus, UsbVidPid(USB_VID, USB_PID))
             .manufacturer("GosuDRM")
             .product("Air96 V2 Keyboard")
-            .serial_number("v3.0.3")
+            .serial_number("v3.0.6")
             .device_class(0x00)
             .device_sub_class(0x00)
             .device_protocol(0x00)

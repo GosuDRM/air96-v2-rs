@@ -155,7 +155,7 @@ use crate::config::eeprom;
 }
 #[test] fn frame_lengths() {
     let mut p = UartProtocol::new();
-    assert_eq!(p.build_link_cmd(CMD_SET_NAME), 21);
+    assert_eq!(p.build_link_cmd(CMD_SET_NAME), 17);
     assert_eq!(p.build_link_cmd(CMD_SET_24G_NAME), 49);
     p.link_mode = LinkMode::Bt1;
     assert_eq!(p.build_link_cmd(CMD_NEW_ADV), 7);
