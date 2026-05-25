@@ -1,5 +1,18 @@
 # Changelog
 
+## v3.8.2 (2026-05-26)
+
+Optimized keypress scanning latency and resolved host-side test compilation issues.
+
+### Added
+
+- **Continuous Matrix Scanning** — Decoupled the key matrix scan and USB HID poll from the 1ms SysTick timer, allowing them to spin as fast as possible to minimize latency.
+- **`tick_debounce()`** — Added a dedicated tick-based debounce counter decrement method to preserve the 5ms key debounce lockout window under continuous matrix scanning.
+
+### Fixed
+
+- **Host Test Compilation** — Target-gated ARM inline assembly instructions (`msr`, `bx`) in `enter_bootloader` and `jump_to_bootloader` to compile only on ARM architecture target, allowing `cargo test` to build and run warning-free on the host.
+
 ## v3.8.1 (2026-05-26)
 
 Fixed stuck keys and auto-repeat in wired USB NKRO mode.

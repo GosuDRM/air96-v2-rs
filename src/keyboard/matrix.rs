@@ -12,6 +12,7 @@
 use stm32f0xx_hal::pac;
 
 /// Magic value written to RTC backup register for DFU entry
+#[allow(dead_code)]
 const DFU_MAGIC: u32 = 0xDF0DF0DF;
 
 /// Port + pin number pair for raw register access
@@ -145,7 +146,7 @@ impl Matrix {
     }
 
     /// Full matrix scan — returns list of changed keys.
-    /// Call every 1ms from main loop.
+    /// Call continuously from main loop.
     pub fn scan(&mut self) -> heapless::Vec<KeyEvent, 32> {
         let mut events: heapless::Vec<KeyEvent, 32> = heapless::Vec::new();
 
@@ -171,8 +172,7 @@ impl Matrix {
                 let ctr = &mut self.counters[row_idx][col_idx];
 
                 if *ctr > 0 {
-                    // Lockout window is active — decrement timer and ignore any chatter
-                    *ctr -= 1;
+                    // Lockout window is active — ignore any chatter
                 } else if debounced_bit != pressed {
                     // State changed outside lockout window — trigger instantly (0ms latency!)
                     if pressed {
@@ -196,6 +196,19 @@ impl Matrix {
         }
 
         events
+    }
+
+    /// Decrement per-key lockout debounce counters.
+    /// Call exactly once every 1ms from SysTick loop.
+    pub fn tick_debounce(&mut self) {
+        for row in 0..6 {
+            for col in 0..21 {
+                let ctr = &mut self.counters[row][col];
+                if *ctr > 0 {
+                    *ctr -= 1;
+                }
+            }
+        }
     }
 
     /// Check if Escape key (row 0, col 0) is held — for DFU entry.
@@ -225,6 +238,7 @@ impl Matrix {
     /// On next boot, check_dfu_magic_and_jump() detects the magic and
     /// performs a clean jump to the ROM bootloader.
     /// This is the QMK stm32_dfu pattern — survives system reset.
+    #[cfg(all(target_arch = "arm", not(test)))]
     pub unsafe fn enter_bootloader() -> ! {
         cortex_m::interrupt::disable();
 
@@ -243,11 +257,17 @@ impl Matrix {
         cortex_m::peripheral::SCB::sys_reset();
     }
 
+    #[cfg(not(all(target_arch = "arm", not(test))))]
+    pub unsafe fn enter_bootloader() -> ! {
+        loop {}
+    }
+
     /// Full-cleanup jump to STM32F072 ROM bootloader (0483:DF11).
     /// Disables all NVIC interrupts, clears pending flags, resets SysTick,
     /// points VTOR to system memory (0x1FFF_C800), sets MSP and jumps.
     /// Must only be called from check_dfu_magic_and_jump() at boot.
     #[allow(asm_sub_register)]
+    #[cfg(all(target_arch = "arm", not(test)))]
     pub unsafe fn jump_to_bootloader() -> ! {
         // Disable interrupts globally
         cortex_m::interrupt::disable();
@@ -294,5 +314,10 @@ impl Matrix {
             rv = in(reg) rv,
             options(noreturn)
         );
+    }
+
+    #[cfg(not(all(target_arch = "arm", not(test))))]
+    pub unsafe fn jump_to_bootloader() -> ! {
+        loop {}
     }
 }

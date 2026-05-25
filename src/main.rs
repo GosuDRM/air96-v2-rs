@@ -706,33 +706,17 @@ fn main() -> ! {
     let mut rgb_flush_timer: u32 = 0;
     let mut rgb_anim_timer: u32 = 0;
     let mut t50: u32 = 0;
-    let mut periodic_timer: u32 = 0;
+    let mut periodic_timer = 0u16;
 
     loop {
-        // ── Wait for 1ms SysTick ──────────────────────────────────
-        while !tick_arrived() {
-            cortex_m::asm::wfi();
-        }
+        let tick = tick_arrived();
 
-        // ── Matrix scan ──────────────────────────────────────────
+        // ── High-Performance Continuous Matrix Scan ─────────────────
         let events = dev.matrix.scan();
         for ev in &events {
             dev.process_key_event(ev.row, ev.col, ev.pressed);
         }
 
-        // ── DFU entry: hold Escape alone (no other keys) for 3 seconds ──
-        {
-            let esc = dev.current_keys.contains(&0x29u8);
-            let other = dev.current_keys.iter().any(|&k| k != 0 && k != 0x29);
-            if esc && !other {
-                dev.dfu_hold_ticks = dev.dfu_hold_ticks.saturating_add(1);
-                if dev.dfu_hold_ticks >= 3000 {
-                    unsafe { keyboard::matrix::Matrix::enter_bootloader(); }
-                }
-            } else {
-                dev.dfu_hold_ticks = 0;
-            }
-        }
         if !events.is_empty() {
             if dev.proto.link_mode == LinkMode::Usb {
                 // Wired mode: send keyboard + consumer + system via USB HID
@@ -761,67 +745,80 @@ fn main() -> ! {
             }
         }
 
-        // ── USB HID poll ──────────────────────────────────────────
+        // Always poll USB HID to flush reports/process tokens as fast as possible
         let _usb_configured = usb_hid.poll();
         let keyboard_leds = usb_hid.host_led_state();
 
-        // ── Dial switch read (debounced: 500ms stable before acting) ──
-        if dev.f_dial_sw_init_ok {
-            let dev_now = dev_mode.is_high().unwrap_or(false);
-            let sys_now = sys_mode.is_high().unwrap_or(false);
+        // ── 1ms Timing-Dependent Logic ──────────────────────────────
+        if tick {
+            dev.matrix.tick_debounce();
 
-            // Debounce DEV dial switch
-            if dev_now != dev.dial_dev_last {
-                dev.dial_dev_debounce = 0;
-                dev.dial_dev_last = dev_now;
-            } else {
-                if dev.dial_dev_debounce < 500 {
+            // ── DFU entry: hold Escape alone (no other keys) for 3 seconds ──
+            {
+                let esc = dev.current_keys.contains(&0x29u8);
+                let other = dev.current_keys.iter().any(|&k| k != 0 && k != 0x29);
+                if esc && !other {
+                    dev.dfu_hold_ticks = dev.dfu_hold_ticks.saturating_add(1);
+                    if dev.dfu_hold_ticks >= 3000 {
+                        unsafe { keyboard::matrix::Matrix::enter_bootloader(); }
+                    }
+                } else {
+                    dev.dfu_hold_ticks = 0;
+                }
+            }
+
+            // ── Dial switch read (debounced: 500ms stable before acting) ──
+            if dev.f_dial_sw_init_ok {
+                let dev_now = dev_mode.is_high().unwrap_or(false);
+                let sys_now = sys_mode.is_high().unwrap_or(false);
+
+                // Debounce DEV dial switch
+                if dev_now != dev.dial_dev_last {
+                    dev.dial_dev_debounce = 0;
+                    dev.dial_dev_last = dev_now;
+                } else if dev.dial_dev_debounce < 500 {
                     dev.dial_dev_debounce += 1;
                 }
-            }
 
-            // Debounce SYS dial switch
-            if sys_now != dev.dial_sys_last {
-                dev.dial_sys_debounce = 0;
-                dev.dial_sys_last = sys_now;
-            } else {
-                if dev.dial_sys_debounce < 500 {
+                // Debounce SYS dial switch
+                if sys_now != dev.dial_sys_last {
+                    dev.dial_sys_debounce = 0;
+                    dev.dial_sys_last = sys_now;
+                } else if dev.dial_sys_debounce < 500 {
                     dev.dial_sys_debounce += 1;
                 }
-            }
 
-            // Act on stable DEV state (>=500ms)
-            if dev.dial_dev_debounce >= 500 {
-                if dev.dial_dev_last {
-                    if dev.proto.link_mode != LinkMode::Usb {
-                        dev.proto.link_mode = LinkMode::Usb;
-                        dev.break_all_keys();
-                        usb_hid.release_all();
-                        dev.proto.f_send_channel = true;
-                    }
-                } else {
-                    let desired_ch = dev.proto.rf_channel;
-                    if dev.proto.link_mode as u8 != desired_ch {
-                        dev.proto.link_mode = LinkMode::from_u8(desired_ch);
-                        dev.break_all_keys();
-                        dev.proto.f_send_channel = true;
+                // Act on stable DEV state (>=500ms)
+                if dev.dial_dev_debounce >= 500 {
+                    if dev.dial_dev_last {
+                        if dev.proto.link_mode != LinkMode::Usb {
+                            dev.proto.link_mode = LinkMode::Usb;
+                            dev.break_all_keys();
+                            usb_hid.release_all();
+                            dev.proto.f_send_channel = true;
+                        }
+                    } else {
+                        let desired_ch = dev.proto.rf_channel;
+                        if dev.proto.link_mode as u8 != desired_ch {
+                            dev.proto.link_mode = LinkMode::from_u8(desired_ch);
+                            dev.break_all_keys();
+                            dev.proto.f_send_channel = true;
+                        }
                     }
                 }
-            }
 
-            // Act on stable SYS state (>=500ms)
-            if dev.dial_sys_debounce >= 500 {
-                if dev.dial_sys_last {
-                    if dev.proto.sys_sw_state != 0xA2 {
-                        dev.proto.sys_sw_state = 0xA2;
-                        dev.active_layers[0] = 0;
-                        dev.nkro_enabled = false;
-                        dev.break_all_keys();
-                        dev.side.show_sys();
-                        if dev.proto.link_mode == LinkMode::Usb { usb_hid.release_all(); }
-                    }
-                } else {
-                    if dev.proto.sys_sw_state != 0xA1 {
+                // Act on stable SYS state (>=500ms)
+                if dev.dial_sys_debounce >= 500 {
+                    if dev.dial_sys_last {
+                        if dev.proto.sys_sw_state != 0xA2 {
+                            dev.proto.sys_sw_state = 0xA2;
+                            dev.active_layers[0] = 0;
+                            dev.nkro_enabled = false;
+                            dev.break_all_keys();
+                            dev.side.show_sys();
+                            if dev.proto.link_mode == LinkMode::Usb { usb_hid.release_all(); }
+                        }
+                    } else if dev.proto.sys_sw_state != 0xA1 {
                         dev.proto.sys_sw_state = 0xA1;
                         dev.active_layers[0] = 2;
                         dev.nkro_enabled = true;
@@ -831,146 +828,144 @@ fn main() -> ! {
                     }
                 }
             }
-        }
 
-        t10 += 1;
-        if t10 >= 10 { t10 = 0; dev.sleep.tick_10ms(); }
+            t10 += 1;
+            if t10 >= 10 { t10 = 0; dev.sleep.tick_10ms(); }
 
-        t50 += 1;
-        if t50 >= 50 {
-            t50 = 0;
-            dev.sleep.tick(&mut dev.proto, false);
+            t50 += 1;
+            if t50 >= 50 {
+                t50 = 0;
+                dev.sleep.tick(&mut dev.proto, false);
 
-            // ── Long press handler ────────────────────────────────
-            if dev.rf_sw_press {
-                dev.rf_sw_press_delay += 1;
-                if dev.rf_sw_press_delay >= 60 {
-                    dev.rf_sw_press = false;
-                    let ch = dev.rf_sw_temp;
-                    dev.proto.link_mode = LinkMode::from_u8(ch);
-                    dev.proto.rf_channel = ch;
-                    dev.proto.ble_channel = ch;
-                    for _ in 0..5 {
-                        dev.proto.build_link_cmd(wireless::uart::CMD_NEW_ADV);
-                        uart_flush!(&dev.proto);
-                        // 20ms wait with UART RX
-                        { let mut _c = 20u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
-                        if dev.proto.f_rf_new_adv_ok { break; }
-                    }
-                }
-            } else {
-                dev.rf_sw_press_delay = 0;
-            }
-
-            if dev.dev_reset_press {
-                dev.dev_reset_press_delay += 1;
-                if dev.dev_reset_press_delay >= 60 {
-                    dev.dev_reset_press = false;
-                    if dev.proto.link_mode != LinkMode::Usb {
-                        dev.proto.link_mode = LinkMode::Bt1;
-                        dev.proto.ble_channel = 1;
-                        dev.proto.rf_channel = 1;
-                    } else {
-                        dev.proto.ble_channel = 1;
-                        dev.proto.rf_channel = 1;
-                    }
-                    dev.proto.build_link_cmd(CMD_SET_LINK);
-                    uart_flush!(&dev.proto);
-                    { let mut _c = 500u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
-                    dev.proto.build_link_cmd(wireless::uart::CMD_CLR_DEVICE);
-                    uart_flush!(&dev.proto);
-
-                    // Reset config (M15 fix: full device_reset_init)
-                    dev.side.reset();
-                    dev.rgb.enabled = true;
-                    dev.rgb.hue = 255; dev.rgb.sat = 255;
-                    dev.rgb.val = 223;   // QMK default brightness
-                    dev.rgb.speed = 223; // QMK default speed
-                    dev.rgb.mode = 0;    // QMK default mode
-                    dev.rgb.set_hsv(255, 255, 223);
-                    dev.f_bat_hold = false;
-                    dev.active_layers = [0, 0, 0, 0]; dev.active_layer_count = 1;
-                    if dev.proto.sys_sw_state == 0xA2 {
-                        dev.active_layers[0] = 0;
-                    } else {
-                        dev.active_layers[0] = 2;
-                    }
-                    // Save default config to EEPROM
-                    dev.save_config();
-
-                    // Start non-blocking blink state machine
-                    dc_boost.set_high();
-                    rgb_sdb1.set_high();
-                    rgb_sdb2.set_high();
-                    dev.reset_blink_phase = 1;  // first ON phase
-                    dev.reset_blink_timer = 200;
-                }
-            } else {
-                dev.dev_reset_press_delay = 0;
-            }
-
-            if dev.rgb_test_press {
-                dev.rgb_test_press_delay += 1;
-                if dev.rgb_test_press_delay >= 60 {
-                    dev.rgb_test_press = false;
-                    dc_boost.set_high();
-                    rgb_sdb1.set_high();
-                    rgb_sdb2.set_high();
-                    dev.rgb_test_phase = 1; // first color
-                    dev.rgb_test_timer = 500;
-                }
-            } else {
-                dev.rgb_test_press_delay = 0;
-            }
-
-            // ── RF state sync ────────────────────────────────────
-            if dev.proto.f_rf_reset {
-                dev.proto.f_rf_reset = false;
-                { let mut _c = 100u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
-                nrf_reset.set_low();
-                { let mut _c = 50u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
-                nrf_reset.set_high();
-                { let mut _c = 50u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
-            } else if dev.proto.f_send_channel {
-                dev.proto.f_send_channel = false;
-                dev.proto.build_link_cmd(CMD_SET_LINK);
-                uart_flush!(&dev.proto);
-            }
-
-            if dev.proto.link_mode != LinkMode::Usb {
-                dev.proto.build_link_cmd(CMD_RF_STS_SYSC);
-                uart_flush!(&dev.proto);
-                dev.proto.sync_lost += 1;
-                if dev.proto.sync_lost >= 5 {
-                    dev.proto.sync_lost = 0;
-                    dev.proto.f_rf_reset = true;
-                }
-            }
-
-            // ── B1 blink guard + M14: 24G name on connect ─────────
-            if dev.proto.rf_state != RfState::Connect {
-                if dev.proto.disconnect_delay >= 10 {
-                    if dev.side.link_state_temp != dev.proto.rf_state as u8 {
-                        dev.side.blink_rf(3);
-                        dev.side.link_state_temp = dev.proto.rf_state as u8;
+                // ── Long press handler ────────────────────────────────
+                if dev.rf_sw_press {
+                    dev.rf_sw_press_delay += 1;
+                    if dev.rf_sw_press_delay >= 60 {
+                        dev.rf_sw_press = false;
+                        let ch = dev.rf_sw_temp;
+                        dev.proto.link_mode = LinkMode::from_u8(ch);
+                        dev.proto.rf_channel = ch;
+                        dev.proto.ble_channel = ch;
+                        for _ in 0..5 {
+                            dev.proto.build_link_cmd(wireless::uart::CMD_NEW_ADV);
+                            uart_flush!(&dev.proto);
+                            // 20ms wait with UART RX
+                            { let mut _c = 20u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
+                            if dev.proto.f_rf_new_adv_ok { break; }
+                        }
                     }
                 } else {
-                    dev.proto.disconnect_delay += 1;
+                    dev.rf_sw_press_delay = 0;
                 }
-            } else {
-                dev.proto.disconnect_delay = 0;
-                let st = dev.proto.rf_state as u8;
-                if dev.side.link_state_temp != st {
-                    if dev.proto.link_mode == LinkMode::Rf24 {
-                        dev.proto.build_link_cmd(CMD_SET_24G_NAME);
+
+                if dev.dev_reset_press {
+                    dev.dev_reset_press_delay += 1;
+                    if dev.dev_reset_press_delay >= 60 {
+                        dev.dev_reset_press = false;
+                        if dev.proto.link_mode != LinkMode::Usb {
+                            dev.proto.link_mode = LinkMode::Bt1;
+                            dev.proto.ble_channel = 1;
+                            dev.proto.rf_channel = 1;
+                        } else {
+                            dev.proto.ble_channel = 1;
+                            dev.proto.rf_channel = 1;
+                        }
+                        dev.proto.build_link_cmd(CMD_SET_LINK);
                         uart_flush!(&dev.proto);
+                        { let mut _c = 500u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
+                        dev.proto.build_link_cmd(wireless::uart::CMD_CLR_DEVICE);
+                        uart_flush!(&dev.proto);
+
+                        // Reset config (M15 fix: full device_reset_init)
+                        dev.side.reset();
+                        dev.rgb.enabled = true;
+                        dev.rgb.hue = 255; dev.rgb.sat = 255;
+                        dev.rgb.val = 223;   // QMK default brightness
+                        dev.rgb.speed = 223; // QMK default speed
+                        dev.rgb.mode = 0;    // QMK default mode
+                        dev.rgb.set_hsv(255, 255, 223);
+                        dev.f_bat_hold = false;
+                        dev.active_layers = [0, 0, 0, 0]; dev.active_layer_count = 1;
+                        if dev.proto.sys_sw_state == 0xA2 {
+                            dev.active_layers[0] = 0;
+                        } else {
+                            dev.active_layers[0] = 2;
+                        }
+                        // Save default config to EEPROM
+                        dev.save_config();
+
+                        // Start non-blocking blink state machine
+                        dc_boost.set_high();
+                        rgb_sdb1.set_high();
+                        rgb_sdb2.set_high();
+                        dev.reset_blink_phase = 1;  // first ON phase
+                        dev.reset_blink_timer = 200;
                     }
-                    dev.side.link_state_temp = st;
+                } else {
+                    dev.dev_reset_press_delay = 0;
+                }
+
+                if dev.rgb_test_press {
+                    dev.rgb_test_press_delay += 1;
+                    if dev.rgb_test_press_delay >= 60 {
+                        dev.rgb_test_press = false;
+                        dc_boost.set_high();
+                        rgb_sdb1.set_high();
+                        rgb_sdb2.set_high();
+                        dev.rgb_test_phase = 1; // first color
+                        dev.rgb_test_timer = 500;
+                    }
+                } else {
+                    dev.rgb_test_press_delay = 0;
+                }
+
+                // ── RF state sync ────────────────────────────────────
+                if dev.proto.f_rf_reset {
+                    dev.proto.f_rf_reset = false;
+                    { let mut _c = 100u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
+                    nrf_reset.set_low();
+                    { let mut _c = 50u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
+                    nrf_reset.set_high();
+                    { let mut _c = 50u32; while _c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } _c -= 1; if let Ok(b) = serial.read() { dev.proto.rx_queue_byte(b); } else { let _ = dev.proto.rx_finish(); } } };
+                } else if dev.proto.f_send_channel {
+                    dev.proto.f_send_channel = false;
+                    dev.proto.build_link_cmd(CMD_SET_LINK);
+                    uart_flush!(&dev.proto);
+                }
+
+                if dev.proto.link_mode != LinkMode::Usb {
+                    dev.proto.build_link_cmd(CMD_RF_STS_SYSC);
+                    uart_flush!(&dev.proto);
+                    dev.proto.sync_lost += 1;
+                    if dev.proto.sync_lost >= 5 {
+                        dev.proto.sync_lost = 0;
+                        dev.proto.f_rf_reset = true;
+                    }
+                }
+
+                // ── B1 blink guard + M14: 24G name on connect ─────────
+                if dev.proto.rf_state != RfState::Connect {
+                    if dev.proto.disconnect_delay >= 10 {
+                        if dev.side.link_state_temp != dev.proto.rf_state as u8 {
+                            dev.side.blink_rf(3);
+                            dev.side.link_state_temp = dev.proto.rf_state as u8;
+                        }
+                    } else {
+                        dev.proto.disconnect_delay += 1;
+                    }
+                } else {
+                    dev.proto.disconnect_delay = 0;
+                    let st = dev.proto.rf_state as u8;
+                    if dev.side.link_state_temp != st {
+                        if dev.proto.link_mode == LinkMode::Rf24 {
+                            dev.proto.build_link_cmd(CMD_SET_24G_NAME);
+                            uart_flush!(&dev.proto);
+                        }
+                        dev.side.link_state_temp = st;
+                    }
                 }
             }
         }
-
-        // ── Non-blocking state machines (run every 1ms) ──────────────
 
         // Device reset blink state machine (6 phases: on,off,on,off,on,off)
         if dev.reset_blink_phase > 0 && dev.reset_blink_phase <= 6 {
@@ -982,14 +977,16 @@ fn main() -> ! {
             }
             if rgb_flush_timer >= 10 { rgb_flush_timer = 0; pwm_flush!(&mut dev.rgb, i2c); }
 
-            if dev.reset_blink_timer > 0 {
-                dev.reset_blink_timer -= 1;
-            } else {
-                dev.reset_blink_phase += 1;
-                dev.reset_blink_timer = 200;
-                if dev.reset_blink_phase > 6 {
-                    dev.reset_blink_phase = 0; // done
-                    dev.rgb.set_all(0, 0, 0);
+            if tick {
+                if dev.reset_blink_timer > 0 {
+                    dev.reset_blink_timer -= 1;
+                } else {
+                    dev.reset_blink_phase += 1;
+                    dev.reset_blink_timer = 200;
+                    if dev.reset_blink_phase > 6 {
+                        dev.reset_blink_phase = 0; // done
+                        dev.rgb.set_all(0, 0, 0);
+                    }
                 }
             }
         }
@@ -1009,14 +1006,16 @@ fn main() -> ! {
             dev.rgb.set_all(r, g, b);
             if rgb_flush_timer >= 10 { rgb_flush_timer = 0; pwm_flush!(&mut dev.rgb, i2c); }
 
-            if dev.rgb_test_timer > 0 {
-                dev.rgb_test_timer -= 1;
-            } else {
-                dev.rgb_test_phase += 1;
-                dev.rgb_test_timer = 500;
-                if dev.rgb_test_phase > 7 {
-                    dev.rgb_test_phase = 0;
-                    dev.rgb.set_all(0, 0, 0);
+            if tick {
+                if dev.rgb_test_timer > 0 {
+                    dev.rgb_test_timer -= 1;
+                } else {
+                    dev.rgb_test_phase += 1;
+                    dev.rgb_test_timer = 500;
+                    if dev.rgb_test_phase > 7 {
+                        dev.rgb_test_phase = 0;
+                        dev.rgb.set_all(0, 0, 0);
+                    }
                 }
             }
         }
@@ -1030,10 +1029,12 @@ fn main() -> ! {
         }
 
         // ── RGB animation tick (every ~20ms) ─────────────────────────
-        rgb_anim_timer += 1;
-        if rgb_anim_timer >= 20 {
-            rgb_anim_timer = 0;
-            dev.rgb.tick_animation();
+        if tick {
+            rgb_anim_timer += 1;
+            if rgb_anim_timer >= 20 {
+                rgb_anim_timer = 0;
+                dev.rgb.tick_animation();
+            }
         }
 
         // ── BAT_NUM ──────────────────────────────────────────────────
@@ -1062,8 +1063,10 @@ fn main() -> ! {
         }
 
         // ── RGB matrix I2C flush (only when idle — never block keystrokes) ──
-        rgb_flush_timer += 1;
-        let idle = events.len() == 0 && dev.current_keys.iter().all(|&k| k == 0);
+        if tick {
+            rgb_flush_timer += 1;
+        }
+        let idle = events.is_empty() && dev.current_keys.iter().all(|&k| k == 0);
         if dev.rgb.needs_flush() && rgb_flush_timer >= 10 && idle {
             rgb_flush_timer = 0;
             pwm_flush!(&mut dev.rgb, i2c);
