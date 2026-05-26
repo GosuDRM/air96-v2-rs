@@ -152,13 +152,13 @@ pub const LAYER_MAC_FN: [[u16; 21]; 6] = [
     // Row 1: __, LNK_BLE1, LNK_BLE2, LNK_BLE3, LNK_RF, __... (transparent for rest)
     [NR, KC_LNK_BLE1, KC_LNK_BLE2, KC_LNK_BLE3, KC_LNK_RF, NR, NR, NR, NR, NR, NR, NR, NR, NR,
      NR, NR, NR, NR, NR, NR, NR],
-    // Row 2: __... DEV_RESET at 11, SLEEP_MODE at 12, BAT_SHOW at 13, INS at 14
-    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, KC_DEV_RESET, KC_SLEEP_MODE, KC_BAT_SHOW,
+    // Row 2: __... DEV_RESET at 11, SLEEP_MODE at 12, RGB_MOD at 13, INS at 14
+    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, KC_DEV_RESET, KC_SLEEP_MODE, KC_RGB_MOD,
      0x49, NR, NR, NR, NR, NR, NR],
     // Row 3: all transparent
     [NR; 21],
-    // Row 4: MO(4) at 0,7,12; RGB_MOD at 8, RGB_SPI at 9; RGB_VAI at 15 (fn+UP)
-    [MO | 4, NR, NR, NR, NR, NR, NR, MO | 4, KC_RGB_MOD, KC_RGB_SPI, NR, NR, MO | 4,
+    // Row 4: MO(4) at 0,8,12; RGB_SPI at 9; RGB_VAI at 15 (fn+UP)
+    [MO | 4, NR, NR, NR, NR, NR, NR, NR, MO | 4, KC_RGB_SPI, NR, NR, MO | 4,
      NR, NR, KC_RGB_VAI, NR, NR, NR, NR, NR],
     // Row 5: fn+LEFT=SPD at 14, fn+DOWN=VAD at 15, fn+RIGHT=SPI at 16, HUI at 17
     [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR,
@@ -201,13 +201,13 @@ pub const LAYER_WIN_FN: [[u16; 21]; 6] = [
     // Row 1: same as Mac Fn (link keys on 1-4)
     [NR, KC_LNK_BLE1, KC_LNK_BLE2, KC_LNK_BLE3, KC_LNK_RF, NR, NR, NR, NR, NR, NR, NR, NR, NR,
      NR, NR, NR, NR, NR, NR, NR],
-    // Row 2: same as Mac Fn (DEV_RESET, SLEEP_MODE, BAT_SHOW, INS)
-    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, KC_DEV_RESET, KC_SLEEP_MODE, KC_BAT_SHOW,
+    // Row 2: same as Mac Fn (DEV_RESET, SLEEP_MODE, RGB_MOD, INS)
+    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, KC_DEV_RESET, KC_SLEEP_MODE, KC_RGB_MOD,
      0x49, NR, NR, NR, NR, NR, NR],
     // Row 3: all transparent
     [NR; 21],
-    // Row 4: same as Mac Fn (MO(4), RGB_MOD at 8, RGB_SPI at 9, fn+UP=VAI)
-    [MO | 4, NR, NR, NR, NR, NR, NR, MO | 4, KC_RGB_MOD, KC_RGB_SPI, NR, NR, MO | 4,
+    // Row 4: same as Mac Fn (MO(4), MO(4) at 8, RGB_SPI at 9, fn+UP=VAI)
+    [MO | 4, NR, NR, NR, NR, NR, NR, NR, MO | 4, KC_RGB_SPI, NR, NR, MO | 4,
      NR, NR, KC_RGB_VAI, NR, NR, NR, NR, NR],
     // Row 5: fn+LEFT=SPD at 14, fn+DOWN=VAD at 15, fn+RIGHT=SPI at 16, HUI at 17
     [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR,

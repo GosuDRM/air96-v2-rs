@@ -71,6 +71,8 @@ struct Device {
     dev_reset_press_delay: u16,
     rgb_test_press: bool,
     rgb_test_press_delay: u16,
+    rgb_mod_press: bool,
+    rgb_mod_press_delay: u16,
     f_sys_show: bool,
     f_sleep_show: bool,
     f_bat_hold: bool,
@@ -116,6 +118,7 @@ impl Device {
             rf_sw_press: false, rf_sw_press_delay: 0, rf_sw_temp: 0,
             dev_reset_press: false, dev_reset_press_delay: 0,
             rgb_test_press: false, rgb_test_press_delay: 0,
+            rgb_mod_press: false, rgb_mod_press_delay: 0,
             f_sys_show: false, f_sleep_show: false, f_bat_hold: false,
             dfu_hold_ticks: 0,
             save_pending: false,
@@ -249,7 +252,22 @@ impl Device {
             keymap::KC_RGB_SPI => if pressed { self.rgb.speed = self.rgb.speed.saturating_add(16); self.save_config(); },
             keymap::KC_RGB_VAI => if pressed { self.rgb.val = self.rgb.val.saturating_add(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } self.save_config(); },
             keymap::KC_RGB_VAD => if pressed { self.rgb.val = self.rgb.val.saturating_sub(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } self.save_config(); },
-            keymap::KC_RGB_MOD => if pressed { self.rgb.next_mode(); self.save_config(); },
+            keymap::KC_RGB_MOD => {
+                if pressed {
+                    self.rgb_mod_press = true;
+                    self.rgb_mod_press_delay = 0;
+                } else if self.rgb_mod_press {
+                    self.rgb_mod_press = false;
+                    self.f_bat_hold = false;
+                    if self.rgb_mod_press_delay < 6 {
+                        self.rgb.next_mode();
+                        if self.rgb.mode == 0 {
+                            self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val);
+                        }
+                        self.save_config();
+                    }
+                }
+            }
             keymap::KC_RGB_HUI => if pressed { self.rgb.hue = self.rgb.hue.wrapping_add(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } self.save_config(); },
 
             keymap::KC_MAC_TASK => {
@@ -1143,6 +1161,15 @@ fn main() -> ! {
                     }
                 } else {
                     dev.rgb_test_press_delay = 0;
+                }
+
+                if dev.rgb_mod_press {
+                    dev.rgb_mod_press_delay += 1;
+                    if dev.rgb_mod_press_delay >= 6 {
+                        dev.f_bat_hold = true;
+                    }
+                } else {
+                    dev.rgb_mod_press_delay = 0;
                 }
             }
 
