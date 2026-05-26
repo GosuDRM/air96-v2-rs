@@ -172,7 +172,8 @@ impl Matrix {
                 let ctr = &mut self.counters[row_idx][col_idx];
 
                 if *ctr > 0 {
-                    // Lockout window is active — ignore any chatter
+                    // Lockout window — decrement per scan (~180µs), ignore chatter
+                    *ctr -= 1;
                 } else if debounced_bit != pressed {
                     // State changed outside lockout window — trigger instantly (0ms latency!)
                     if pressed {
@@ -185,7 +186,7 @@ impl Matrix {
                         col: col_idx as u8,
                         pressed,
                     });
-                    *ctr = 5; // 5ms chatter lockout window
+                    *ctr = 28; // ~5ms lockout at continuous scan rate (~180µs/scan)
                 }
             }
 
@@ -199,16 +200,11 @@ impl Matrix {
     }
 
     /// Decrement per-key lockout debounce counters.
-    /// Call exactly once every 1ms from SysTick loop.
+    /// No-op since v3.9.x — scan loop handles decrement per scan.
+    /// The continuous scan at ~180µs/cycle makes per-scan debounce
+    /// more accurate than per-tick (1ms) debounce.
     pub fn tick_debounce(&mut self) {
-        for row in 0..6 {
-            for col in 0..21 {
-                let ctr = &mut self.counters[row][col];
-                if *ctr > 0 {
-                    *ctr -= 1;
-                }
-            }
-        }
+        // Scan loop decrements counters inline — nothing to do here.
     }
 
     /// Check if Escape key (row 0, col 0) is held — for DFU entry.

@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.9.2 (2026-05-26)
+
+Fixed missed keystrokes — lockout debounce was double-decrementing causing premature expiry.
+
+### Fixed
+
+- **Double Decrement Debounce** — `scan()` decrements lockout counter per scan (~180µs), and `tick_debounce()` was ALSO decrementing per millisecond. With lockout=28, effective debounce was ~2.5ms — too short. Keys could press+release within one scan window, producing zero net events visible to USB. Fixed by making `tick_debounce()` a no-op; lockout is now purely scan-based at 28 scans ≈ 5ms.
+- **Lockout Resolution** — Changed from tick-based (1ms) to scan-based (~180µs) to match the continuous matrix scan rate introduced in v3.8.2.
+
 ## v3.9.1 (2026-05-26)
 
 Fixed Bluetooth/2.4GHz pairing — NRF module must receive CMD_SET_LINK before CMD_NEW_ADV.
