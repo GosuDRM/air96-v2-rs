@@ -1,5 +1,15 @@
 # Changelog
 
+## v3.9.4 (2026-05-26)
+
+Fixed Bluetooth pairing hold bug and resolved lost keystrokes/overwritten UART reports.
+
+### Fixed
+
+- **Bluetooth Pairing Hold** — Shifted `dev_sts_sync` status sync logic from 50ms block to a dedicated 200ms `t200` block. This reduces UART traffic by 4x and increases sync loss reset window from 250ms to 1000ms (1.0 second), preventing false NRF52 co-processor resets during long pairing/link establishment sequences.
+- **Lost Keystrokes & Overwritten Reports** — Replaced delayed scan-end flushing with a closure-based immediate UART flushing architecture. This ensures standard, consumer, system, and hotkey reports are transmitted instantly when built. Mutually decoupled NKRO bit reports (`CMD_RPT_BIT_KB`) and standard boot reports (`CMD_RPT_BYTE_KB`) in `send_nkro` to prevent them from overwriting each other in the shared `tx_buf` array.
+- **Stale Press Timer** — Added reset of `rf_sw_press_delay = 0` on switch key press to prevent stale counter values.
+
 ## v3.9.3 (2026-05-26)
 
 Remapped fn+arrow keys for intuitive RGB control.

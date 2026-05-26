@@ -156,7 +156,7 @@ impl Device {
         self.save_pending = true;
     }
 
-    fn process_custom_keycode(&mut self, kc: u16, pressed: bool, usb_hid: &mut UsbHid) {
+    fn process_custom_keycode(&mut self, kc: u16, pressed: bool, usb_hid: &mut UsbHid, mut flush: impl FnMut(&mut UartProtocol)) {
         match kc {
             keymap::KC_RF_DFU => {
                 if pressed && self.proto.link_mode == LinkMode::Usb {
@@ -169,6 +169,7 @@ impl Device {
                 } else {
                     self.proto.link_mode = LinkMode::Usb;
                     self.proto.build_link_cmd(CMD_SET_LINK);
+                    flush(&mut self.proto);
                     self.side.blink_rf(3);
                 }
             }
@@ -177,15 +178,16 @@ impl Device {
                 if pressed && self.proto.link_mode != LinkMode::Usb {
                     self.rf_sw_temp = ch as u8;
                     self.rf_sw_press = true;
+                    self.rf_sw_press_delay = 0; // Reset delay on press
                     self.break_all_keys();
                 } else if !pressed && self.rf_sw_press {
                     self.rf_sw_press = false;
-                    if self.rf_sw_press_delay < 20 {
+                    if self.rf_sw_press_delay < 60 {
                         self.proto.link_mode = ch;
                         self.proto.rf_channel = ch as u8;
                         self.proto.ble_channel = ch as u8;
                         self.proto.build_link_cmd(CMD_SET_LINK);
-                        self.side.blink_rf(3);
+                        flush(&mut self.proto);
                     }
                 }
             }
@@ -227,12 +229,14 @@ impl Device {
                 let usage = keymap::consumer_usage(k);
                 if pressed {
                     report::send_consumer(&mut self.proto, usage);
+                    flush(&mut self.proto);
                     self.pending_consumer_usb = usage;
                     if self.proto.link_mode == LinkMode::Usb {
                         usb_hid.send_consumer(usage);
                     }
                 } else {
                     report::send_consumer(&mut self.proto, 0);
+                    flush(&mut self.proto);
                     self.pending_consumer_usb = 0;
                     if self.proto.link_mode == LinkMode::Usb {
                         usb_hid.send_consumer(0);
@@ -251,12 +255,14 @@ impl Device {
             keymap::KC_MAC_TASK => {
                 if pressed {
                     report::send_consumer(&mut self.proto, 0x029F);
+                    flush(&mut self.proto);
                     self.pending_consumer_usb = 0x029F;
                     if self.proto.link_mode == LinkMode::Usb {
                         usb_hid.send_consumer(0x029F);
                     }
                 } else {
                     report::send_consumer(&mut self.proto, 0);
+                    flush(&mut self.proto);
                     self.pending_consumer_usb = 0;
                     if self.proto.link_mode == LinkMode::Usb {
                         usb_hid.send_consumer(0);
@@ -277,6 +283,7 @@ impl Device {
                         }
                     } else {
                         report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
+                        flush(&mut self.proto);
                     }
                     
                     self.current_mods &= !0x08;
@@ -290,18 +297,21 @@ impl Device {
                         }
                     } else {
                         report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
+                        flush(&mut self.proto);
                     }
                 }
             }
             keymap::KC_MAC_VOICE => {
                 if pressed {
                     report::send_consumer(&mut self.proto, 0x00CF);
+                    flush(&mut self.proto);
                     self.pending_consumer_usb = 0x00CF;
                     if self.proto.link_mode == LinkMode::Usb {
                         usb_hid.send_consumer(0x00CF);
                     }
                 } else {
                     report::send_consumer(&mut self.proto, 0);
+                    flush(&mut self.proto);
                     self.pending_consumer_usb = 0;
                     if self.proto.link_mode == LinkMode::Usb {
                         usb_hid.send_consumer(0);
@@ -311,12 +321,14 @@ impl Device {
             keymap::KC_MAC_CONSOLE => {
                 if pressed {
                     report::send_consumer(&mut self.proto, 0x02A0);
+                    flush(&mut self.proto);
                     self.pending_consumer_usb = 0x02A0;
                     if self.proto.link_mode == LinkMode::Usb {
                         usb_hid.send_consumer(0x02A0);
                     }
                 } else {
                     report::send_consumer(&mut self.proto, 0);
+                    flush(&mut self.proto);
                     self.pending_consumer_usb = 0;
                     if self.proto.link_mode == LinkMode::Usb {
                         usb_hid.send_consumer(0);
@@ -326,12 +338,14 @@ impl Device {
             keymap::KC_MAC_DND => {
                 if pressed {
                     report::send_system(&mut self.proto, 0x009B);
+                    flush(&mut self.proto);
                     self.pending_system_usb = 0x009B;
                     if self.proto.link_mode == LinkMode::Usb {
                         usb_hid.send_system(0x009B);
                     }
                 } else {
                     report::send_system(&mut self.proto, 0);
+                    flush(&mut self.proto);
                     self.pending_system_usb = 0;
                     if self.proto.link_mode == LinkMode::Usb {
                         usb_hid.send_system(0);
@@ -352,6 +366,7 @@ impl Device {
                         }
                     } else {
                         report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
+                        flush(&mut self.proto);
                     }
                     
                     self.current_mods &= !(0x08 | 0x02);
@@ -365,6 +380,7 @@ impl Device {
                         }
                     } else {
                         report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
+                        flush(&mut self.proto);
                     }
                 }
             }
@@ -386,6 +402,7 @@ impl Device {
                         }
                     } else {
                         report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
+                        flush(&mut self.proto);
                     }
                     
                     self.current_mods &= !(0x08 | 0x02);
@@ -399,6 +416,7 @@ impl Device {
                         }
                     } else {
                         report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
+                        flush(&mut self.proto);
                     }
                 }
             }
@@ -406,7 +424,7 @@ impl Device {
         }
     }
 
-    fn process_key_event(&mut self, row: u8, col: u8, pressed: bool, usb_hid: &mut UsbHid) {
+    fn process_key_event(&mut self, row: u8, col: u8, pressed: bool, usb_hid: &mut UsbHid, mut flush: impl FnMut(&mut UartProtocol)) {
         let ri = row as usize; let ci = col as usize;
         // On press: resolve + store keycode. On release: use stored keycode
         // so that releasing Fn before the modified key still uses the Fn-layer keycode.
@@ -446,7 +464,7 @@ impl Device {
         }
 
         if is_custom(kc) {
-            self.process_custom_keycode(kc, pressed, usb_hid);
+            self.process_custom_keycode(kc, pressed, usb_hid, flush);
             return;
         }
 
@@ -485,7 +503,6 @@ impl Device {
             }
         }
 
-        report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
         // Send NKRO report when enabled (wireless only, USB does 6KRO boot protocol)
         if self.nkro_enabled && self.proto.link_mode != LinkMode::Usb {
             let mut bits = [0u8; 32];
@@ -504,7 +521,10 @@ impl Device {
                     bits[byte] |= 1 << bit;
                 }
             }
-            report::send_nkro(&mut self.proto, &bits);
+            report::send_nkro(&mut self.proto, &bits, flush);
+        } else {
+            report::send_keyboard(&mut self.proto, self.current_mods, &self.current_keys);
+            flush(&mut self.proto);
         }
     }
 }
@@ -834,6 +854,7 @@ fn main() -> ! {
     let mut rgb_flush_timer: u32 = 0;
     let mut rgb_anim_timer: u32 = 0;
     let mut t50: u32 = 0;
+    let mut t200: u32 = 0;
     let mut periodic_timer = 0u16;
     let mut idle_timer = 0u32;
     let mut rx_idle_ticks: u32 = 0;
@@ -843,22 +864,24 @@ fn main() -> ! {
 
         // ── High-Performance Continuous Matrix Scan ─────────────────
         let events = dev.matrix.scan();
+        let mut flush = |proto: &mut UartProtocol| {
+            if proto.link_mode != LinkMode::Usb {
+                uart_flush!(proto);
+            }
+        };
+
         for ev in &events {
-            dev.process_key_event(ev.row, ev.col, ev.pressed, &mut usb_hid);
+            dev.process_key_event(ev.row, ev.col, ev.pressed, &mut usb_hid, &mut flush);
         }
 
-        if !events.is_empty() {
-            if dev.proto.link_mode == LinkMode::Usb {
-                // Wired mode: send either NKRO or standard keyboard report, not both,
-                // to prevent endpoint collision and packet dropping.
-                if dev.nkro_enabled {
-                    let bits = dev.get_nkro_bitmap();
-                    usb_hid.send_nkro(dev.current_mods, &bits);
-                } else {
-                    usb_hid.send_keyboard(dev.current_mods, &dev.current_keys);
-                }
+        if !events.is_empty() && dev.proto.link_mode == LinkMode::Usb {
+            // Wired mode: send either NKRO or standard keyboard report, not both,
+            // to prevent endpoint collision and packet dropping.
+            if dev.nkro_enabled {
+                let bits = dev.get_nkro_bitmap();
+                usb_hid.send_nkro(dev.current_mods, &bits);
             } else {
-                uart_flush!(&dev.proto);
+                usb_hid.send_keyboard(dev.current_mods, &dev.current_keys);
             }
         }
 
@@ -987,7 +1010,7 @@ fn main() -> ! {
                 // ── Long press handler ────────────────────────────────
                 if dev.rf_sw_press {
                     dev.rf_sw_press_delay += 1;
-                    if dev.rf_sw_press_delay >= 20 {
+                    if dev.rf_sw_press_delay >= 60 {
                         dev.rf_sw_press = false;
                         let ch = dev.rf_sw_temp;
                         dev.proto.link_mode = LinkMode::from_u8(ch);
@@ -1070,8 +1093,13 @@ fn main() -> ! {
                 } else {
                     dev.rgb_test_press_delay = 0;
                 }
+            }
 
-                // ── RF state sync ────────────────────────────────────
+            t200 += 1;
+            if t200 >= 200 {
+                t200 = 0;
+
+                // ── RF state sync (once every 200ms) ───────────────────────────────────
                 if dev.proto.f_rf_reset {
                     dev.proto.f_rf_reset = false;
                     uart_wait_rx!(dev, 100);

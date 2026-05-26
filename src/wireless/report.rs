@@ -25,7 +25,7 @@ pub fn send_keyboard(proto: &mut UartProtocol, modifiers: u8, keys: &[u8; 6]) ->
 }
 
 /// NKRO report (port of rf_send_nkro, rf_driver.c:50)
-pub fn send_nkro(proto: &mut UartProtocol, bits: &[u8; 32]) {
+pub fn send_nkro(proto: &mut UartProtocol, bits: &[u8; 32], mut flush: impl FnMut(&mut UartProtocol)) {
     if proto.link_mode == LinkMode::Usb { return; }
 
     let changed = proto.auto_nkey_send(bits);
@@ -37,8 +37,10 @@ pub fn send_nkro(proto: &mut UartProtocol, bits: &[u8; 32]) {
     if changed {
         if bit_active {
             proto.build_report(CMD_RPT_BIT_KB, &bit_report, 16);
+            flush(proto);
         }
         proto.build_report(CMD_RPT_BYTE_KB, &byte_report, 8);
+        flush(proto);
     }
     proto.bitkb_report_buf.copy_from_slice(bits);
 }

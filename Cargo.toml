@@ -1,6 +1,6 @@
 [package]
 name = "air96-v2"
-version = "3.9.3"
+version = "3.9.4"
 edition = "2021"
 authors = ["GosuDRM"]
 description = "Air96 V2 wireless keyboard firmware — Rust (stm32f0xx-hal)"
