@@ -377,6 +377,12 @@ use crate::config::eeprom;
     assert_eq!(sl.output[7], [128, 64, 0]);
     assert_eq!(sl.output[6], [0, 0, 0]);
 
+    // 75% (above 50%) -> Green (0,128,0), all 5 LEDs active (indices 9..=5)
+    sl.bat_percent_led(75);
+    for i in 5..10 {
+        assert_eq!(sl.output[i], [0, 128, 0]);
+    }
+
     // 98% (full) -> Green (0,128,0), all 5 LEDs active (indices 9..=5)
     sl.bat_percent_led(98);
     for i in 5..10 {

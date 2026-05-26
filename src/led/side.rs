@@ -453,10 +453,10 @@ impl SideLeds {
     }
 
     pub(crate) fn bat_percent_led(&mut self, percent: u8) {
-        // C firmware color scheme: (128,0,0) red ≤20%, (128,64,0) orange 21-95%, (0,128,0) green >95%
+        // Battery color scheme: (128,0,0) red ≤20%, (128,64,0) orange 21-50%, (0,128,0) green >50%
         let (r, g, b) = if percent <= 20 {
             (128, 0, 0)
-        } else if percent <= 95 {
+        } else if percent <= 50 {
             (128, 64, 0)
         } else {
             (0, 128, 0)

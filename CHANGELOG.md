@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.9.7 (2026-05-26)
+
+Updated the side LED battery indicator color scheme thresholds to map Orange to 21-50% and Green to >50%.
+
+### Changed
+
+- **Side LED Battery Indicator Color Thresholds** — Shifted the battery color scheme ranges: Red remains ≤ 20%, Orange now represents medium levels (21-50%), and Green signifies healthy levels (>50%, previously >95%).
+- **Enhanced Test Coverage** — Updated the `side_battery_indicator_color_coding` unit test to explicitly assert green color mapping and full segment counts for above-50% charge states (e.g. 75%).
+
 ## v3.9.6 (2026-05-26)
 
 Fixed the manual battery status hotkey shortcut and added rigorous unit test coverage for the color-coded battery indicator levels and animation overrides.
