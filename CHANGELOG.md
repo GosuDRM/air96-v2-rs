@@ -1,5 +1,15 @@
 # Changelog
 
+## v4.0.0 (2026-05-26)
+
+Aligned keyboard Fn hotkeys with physical legends on the Air96 V2 keycaps, and implemented Tap-Hold timer logic for FN + backslash to cycle backlight styles / show battery.
+
+### Fixed
+
+- **Physical Icon Layout Alignment** — Mapped Sidelight Toggle (`MO | 4` layer shift) to the **M** key (which has the sidelight keycap legend) on both Mac and Windows Fn layers, replacing the misplaced `FN + N` shortcut. Moved the main Backlight Effects cycle keycode (`KC_RGB_MOD`) to the backslash (**\\**) key, matching its physical backlight legend.
+- **Tap-Hold Backlight / Battery Shortcut** — Added `rgb_mod_press` hold-tracking timer logic in `src/main.rs`. Tapping `FN + \\` (<300ms) cycles main backlight styles and initializes the active color on solid mode immediately, while holding it ($\ge 300\text{ ms}$) lights up the side battery status LED color-coded level, fading back when released. This prevents battery indicators from flashing on rapid taps.
+- **Enhanced Test Coverage** — Updated the `mac_fn_rgb_controls` and `win_fn_rgb_controls` unit tests to explicitly assert these legend-aligned physical mappings.
+
 ## v3.9.9 (2026-05-26)
 
 Added support for loading, applying, and saving main RGB matrix settings (mode, hue, sat, val, speed, enabled) in the emulated EEPROM, resolving startup default behavior and lack of animations across power cycles.
