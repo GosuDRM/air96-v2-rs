@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.9.6 (2026-05-26)
+
+Fixed the manual battery status hotkey shortcut and added rigorous unit test coverage for the color-coded battery indicator levels and animation overrides.
+
+### Fixed
+
+- **Manual Battery Indicator Shortcut** — Passed the custom battery show flag `f_bat_hold` from the keycode handler into `SideLeds::update` and `bat_led_show`. Pressing or toggling the battery shortcut (Fn + `\` / `KC_BAT_SHOW`) now successfully displays the color-coded battery level on the right side LED as intended, overriding normal side animations.
+- **Rigorously Tested Indicator Logic** — Added comprehensive unit tests (`side_battery_indicator_color_coding` and `side_battery_indicator_hold_override`) verifying the correct color coding (Red ≤ 20%, Orange 21-95%, Green > 95%), LED segment counts, and non-destructive animation hold overrides.
+
 ## v3.9.5 (2026-05-26)
 
 Resolved sleep-mode battery drain, enhanced flash write safety for emulated EEPROM, and restored host unit test compilation support.

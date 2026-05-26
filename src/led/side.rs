@@ -167,7 +167,7 @@ pub struct SideLeds {
     pub rgb_enabled: bool,
 
     play_point: u8,
-    play_cnt: u8,
+    pub(crate) play_cnt: u8,
     play_timer: u32,
 
     // Breath mode persistent play_point (port of static uint8_t in C)
@@ -383,7 +383,7 @@ impl SideLeds {
     }
 
     // ── Battery indicator (port of bat_led_show, B5 fix applied) ──────
-    fn bat_led_show(&mut self, proto: &UartProtocol) {
+    fn bat_led_show(&mut self, proto: &UartProtocol, f_bat_hold: bool) {
         let charge = proto.rf_charge;
         let battery = proto.rf_battery;
 
@@ -406,7 +406,7 @@ impl SideLeds {
             }
         } else {
             self.bat_sts_debounce = 0;
-            if self.bat_show_time > 5000 {
+            if self.bat_show_time > 5000 && !f_bat_hold {
                 self.bat_show_flag = false;
                 self.bat_show_breath = false;
             }
@@ -429,6 +429,13 @@ impl SideLeds {
             }
         }
 
+        // Manual hold override
+        if f_bat_hold {
+            self.bat_show_flag = true;
+            self.bat_show_breath = false;
+            self.bat_show_time = 0;
+        }
+
         if self.bat_show_flag {
             if self.bat_show_breath {
                 if self.bat_play_timer > 10 {
@@ -445,7 +452,7 @@ impl SideLeds {
         }
     }
 
-    fn bat_percent_led(&mut self, percent: u8) {
+    pub(crate) fn bat_percent_led(&mut self, percent: u8) {
         // C firmware color scheme: (128,0,0) red ≤20%, (128,64,0) orange 21-95%, (0,128,0) green >95%
         let (r, g, b) = if percent <= 20 {
             (128, 0, 0)
@@ -466,7 +473,7 @@ impl SideLeds {
     // ── Main update (port of m_side_led_show, side.c:829) ─────────────
     /// elapsed_ms is the number of 1ms ticks passed since last call.
     /// M11 fix: rf_link_show_time increments per 10ms, so divide elapsed by 10.
-    pub fn update(&mut self, proto: &UartProtocol, elapsed_ms: u32, keyboard_leds: u8) {
+    pub fn update(&mut self, proto: &UartProtocol, elapsed_ms: u32, keyboard_leds: u8, f_bat_hold: bool) {
         self.play_cnt = self.play_cnt.saturating_add(elapsed_ms as u8);
         self.play_timer = 0;
         self.rf_blink_timer = self.rf_blink_timer.saturating_add(elapsed_ms);
@@ -488,7 +495,7 @@ impl SideLeds {
         }
 
         // 2. Battery indicator (right side override)
-        self.bat_led_show(proto);
+        self.bat_led_show(proto, f_bat_hold);
 
         // 3. System switch indicator
         if self.sys_show_flag {

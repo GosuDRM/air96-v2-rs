@@ -1238,7 +1238,7 @@ fn main() -> ! {
 
         // ── Side LED update + animation tick ──────────────────────────
         if tick {
-            dev.side.update(&dev.proto, 1, keyboard_leds);
+            dev.side.update(&dev.proto, 1, keyboard_leds, dev.f_bat_hold);
 
             rgb_anim_timer += 1;
             if rgb_anim_timer >= 20 {

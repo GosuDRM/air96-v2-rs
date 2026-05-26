@@ -361,6 +361,54 @@ use crate::config::eeprom;
     assert_eq!(sl.mode, 0); assert_eq!(sl.brightness, 3);
     assert_eq!(sl.speed, 2); assert_eq!(sl.colour, 0); assert!(sl.rgb_enabled);
 }
+#[test] fn side_battery_indicator_color_coding() {
+    let mut sl = side::SideLeds::new();
+
+    // 15% (very low) -> Red (128,0,0), only 1 LED on right side (index 9) active
+    sl.bat_percent_led(15);
+    assert_eq!(sl.output[9], [128, 0, 0]);
+    assert_eq!(sl.output[8], [0, 0, 0]);
+    assert_eq!(sl.output[5], [0, 0, 0]);
+
+    // 45% (medium) -> Orange (128,64,0), 3 LEDs active (indices 9, 8, 7)
+    sl.bat_percent_led(45);
+    assert_eq!(sl.output[9], [128, 64, 0]);
+    assert_eq!(sl.output[8], [128, 64, 0]);
+    assert_eq!(sl.output[7], [128, 64, 0]);
+    assert_eq!(sl.output[6], [0, 0, 0]);
+
+    // 98% (full) -> Green (0,128,0), all 5 LEDs active (indices 9..=5)
+    sl.bat_percent_led(98);
+    for i in 5..10 {
+        assert_eq!(sl.output[i], [0, 128, 0]);
+    }
+}
+#[test] fn side_battery_indicator_hold_override() {
+    let mut sl = side::SideLeds::new();
+    sl.mode = side::SIDE_STATIC;
+    sl.colour = 5; // blue
+    sl.rf_link_show_time = 3000; // prevent link mode override
+    sl.play_cnt = 100; // allow animation update
+    let mut p = UartProtocol::new();
+    p.rf_battery = 45; // medium orange battery
+
+    // First standard update to clear bat_init
+    sl.update(&p, 1, 0, false);
+
+    // Standard update with bat_hold = false after timeout -> displays scaled blue color
+    sl.play_cnt = 100; // allow animation update
+    sl.update(&p, 6000, 0, false);
+    assert_eq!(sl.output[0], [0, 0, 96]);
+    assert_eq!(sl.output[9], [0, 0, 96]);
+
+    // Update with bat_hold = true -> overrides right side to orange battery display
+    sl.play_cnt = 100; // allow animation update
+    sl.update(&p, 1, 0, true);
+    assert_eq!(sl.output[9], [128, 64, 0]);
+    assert_eq!(sl.output[0], [0, 0, 96]);
+}
+
+
 
 // ===== RGB DRIVER =====
 #[test] fn led_map_110() { assert_eq!(rgb::LED_MAP.len(), 110); }
