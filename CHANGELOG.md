@@ -1,5 +1,17 @@
 # Changelog
 
+## v3.9.5 (2026-05-26)
+
+Resolved sleep-mode battery drain, enhanced flash write safety for emulated EEPROM, and restored host unit test compilation support.
+
+### Fixed
+
+- **Sleep Battery Drain** — Implemented sleep/wakeup GPIO power transitions for the Boost Converter (`dc_boost`) and LED drivers (`rgb_sdb1`, `rgb_sdb2`). They are now powered off completely during sleep, resolving excessive battery drain.
+- **Zero-Latency Wakeup** — Added immediate keypress wakeup detection in the matrix scan loop that restores power rails and wakes up the hardware instantly (<1ms), bypassing the 50ms periodic timer.
+- **USB Host Resume** — Updated the sleep wakeup state machine to detect when the USB host resumes from suspend and automatically wakes the keyboard.
+- **Flash Write Safety** — Refactored the emulated EEPROM flash programming writes in `src/config/eeprom.rs` to use `core::ptr::write_volatile`, preventing compiler reordering or elimination of flash status checks and registers.
+- **Host Test Harness** — Conditionally compiled the bare-metal `#[panic_handler]` in `src/main.rs` with `#[cfg(not(test))]` to resolve duplicate lang item conflicts when compiling host-based unit tests.
+
 ## v3.9.4 (2026-05-26)
 
 Fixed Bluetooth pairing hold bug and resolved lost keystrokes/overwritten UART reports.

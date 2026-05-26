@@ -92,22 +92,22 @@ pub fn save(cfg: &UserConfig) {
             let ptr = CONFIG_PAGE_ADDR as *mut u16;
             // Halfword 0: magic (low) | side_mode (high)
             let hw0 = MAGIC_VALID as u16 | ((cfg.side_mode as u16) << 8);
-            *ptr = hw0;
+            core::ptr::write_volatile(ptr, hw0);
             while flash.sr.read().bsy().bit() {}
 
             // Halfword 1: brightness | speed
             let hw1 = (cfg.side_brightness as u16) | ((cfg.side_speed as u16) << 8);
-            *ptr.add(1) = hw1;
+            core::ptr::write_volatile(ptr.add(1), hw1);
             while flash.sr.read().bsy().bit() {}
 
             // Halfword 2: colour | side_rgb
             let hw2 = (cfg.side_colour as u16) | ((cfg.side_rgb as u16) << 8);
-            *ptr.add(2) = hw2;
+            core::ptr::write_volatile(ptr.add(2), hw2);
             while flash.sr.read().bsy().bit() {}
 
             // Halfword 3: sleep_enable | reserved
             let hw3 = cfg.sleep_enable as u16;
-            *ptr.add(3) = hw3;
+            core::ptr::write_volatile(ptr.add(3), hw3);
             while flash.sr.read().bsy().bit() {}
 
             flash.cr.modify(|_, w| w.pg().clear_bit());

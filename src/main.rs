@@ -870,6 +870,18 @@ fn main() -> ! {
             }
         };
 
+        // ── Immediate Wakeup on Key Activity ──────────────────────────
+        if dev.sleep.f_wakeup_prepare && !events.is_empty() {
+            dev.sleep.f_wakeup_prepare = false;
+            dev.sleep.no_act_time = 0;
+            dc_boost.set_high();
+            rgb_sdb1.set_high();
+            rgb_sdb2.set_high();
+            dev.rgb.enabled = true;
+            dev.proto.build_link_cmd(wireless::uart::CMD_HAND);
+            flush(&mut dev.proto);
+        }
+
         for ev in &events {
             dev.process_key_event(ev.row, ev.col, ev.pressed, &mut usb_hid, &mut flush);
         }
@@ -1005,7 +1017,31 @@ fn main() -> ! {
             t50 += 1;
             if t50 >= 50 {
                 t50 = 0;
-                dev.sleep.tick(&mut dev.proto, false);
+                if dev.proto.f_goto_sleep {
+                    dev.proto.f_goto_sleep = false;
+                    dev.sleep.f_goto_sleep = true;
+                }
+
+                let usb_suspended = usb_hid.is_suspended();
+                let prev_wakeup = dev.sleep.f_wakeup_prepare;
+
+                dev.sleep.tick(&mut dev.proto, usb_suspended);
+
+                if !prev_wakeup && dev.sleep.f_wakeup_prepare {
+                    // Entering sleep: power down GPIO rails and disable RGB matrix
+                    dc_boost.set_low();
+                    rgb_sdb1.set_low();
+                    rgb_sdb2.set_low();
+                    dev.rgb.enabled = false;
+                }
+
+                if prev_wakeup && !dev.sleep.f_wakeup_prepare {
+                    // Waking up: restore GPIO rails and enable RGB matrix
+                    dc_boost.set_high();
+                    rgb_sdb1.set_high();
+                    rgb_sdb2.set_high();
+                    dev.rgb.enabled = true;
+                }
 
                 // ── Long press handler ────────────────────────────────
                 if dev.rf_sw_press {
@@ -1303,7 +1339,9 @@ fn main() -> ! {
     }
 }
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
     loop { cortex_m::asm::wfe(); }
 }
+

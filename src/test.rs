@@ -322,6 +322,16 @@ use crate::config::eeprom;
     s.tick(&mut UartProtocol::new(), false);
     assert!(!s.f_wakeup_prepare);
 }
+#[test] fn sleep_wakeup_on_usb_resume() {
+    let mut s = sleep::SleepManager::new();
+    s.f_wakeup_prepare = true;
+    s.no_act_time = 500;
+    let mut p = UartProtocol::new();
+    p.link_mode = LinkMode::Usb;
+    s.tick(&mut p, false);
+    assert!(!s.f_wakeup_prepare);
+}
+
 
 // ===== SIDE LEDS =====
 #[test] fn side_mode_constants() {

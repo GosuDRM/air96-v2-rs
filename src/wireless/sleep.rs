@@ -80,7 +80,8 @@ impl SleepManager {
         }
 
         // ── Wakeup transition (K1 fix: also triggered inline by uart_send_report) ──
-        if self.f_wakeup_prepare && self.no_act_time < 10 {
+        let usb_wake = proto.link_mode == LinkMode::Usb && !usb_suspended;
+        if self.f_wakeup_prepare && (self.no_act_time < 10 || usb_wake) {
             self.f_wakeup_prepare = false;
             // Power-up GPIO handled by main.rs
             proto.build_link_cmd(CMD_HAND);
