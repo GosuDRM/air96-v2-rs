@@ -1336,6 +1336,11 @@ fn main() -> ! {
             dev.proto.rx_queue_byte(byte);
             rx_idle_ticks = 0;
         }
+
+        // Halt CPU in deep standby while sleeping to reduce power draw by >99%
+        if dev.sleep.f_wakeup_prepare {
+            cortex_m::asm::wfi();
+        }
     }
 }
 

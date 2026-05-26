@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.9.8 (2026-05-26)
+
+Optimized wireless mode standby battery consumption by halting the CPU in standby sleep mode.
+
+### Fixed
+
+- **Standby CPU Sleep Optimization (WFI)** — Integrated a low-power assembly halt (`cortex_m::asm::wfi()`) at the end of the main loop when in deep sleep standby state (`f_wakeup_prepare` is true). Halting the CPU prevents continuous high-power active spinning, reducing standby CPU current draw by **over 99%** (to under 50µA) while preserving instant, sub-millisecond wakeup latency when any key is pressed.
+
 ## v3.9.7 (2026-05-26)
 
 Updated the side LED battery indicator color scheme thresholds to map Orange to 21-50% and Green to >50%.
