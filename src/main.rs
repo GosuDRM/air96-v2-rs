@@ -919,6 +919,9 @@ fn main() -> ! {
             dev.process_key_event(ev.row, ev.col, ev.pressed, &mut usb_hid, &mut flush);
         }
 
+        // DO NOT MODIFY — USB report send path (NKRO + standard).
+        // Restructuring this block or moving wireless dispatch here
+        // breaks USB enumeration or wireless reports. See v4.0.2 regression.
         if !events.is_empty() && dev.proto.link_mode == LinkMode::Usb {
             // Wired mode: send either NKRO or standard keyboard report, not both,
             // to prevent endpoint collision and packet dropping.

@@ -148,21 +148,43 @@ impl Matrix {
         }
     }
 
-    /// Full matrix scan — updates stability timers based on raw pin states.
+    /// Full matrix scan — returns list of changed keys.
     /// Call continuously from main loop.
+    /// DO NOT MODIFY — sym_eager_pk debounce (instant trigger + tick lockout).
+    /// Do NOT add counter reset (causes missed keystrokes).
+    /// Do NOT switch to deferred/pending_events (breaks USB enumeration).
     pub fn scan(&mut self) -> heapless::Vec<KeyEvent, 32> {
-        for (row_idx, row_pin) in ROW_PINS.iter().enumerate() {
+        let mut events: heapless::Vec<KeyEvent, 32> = heapless::Vec::new();
+
+        for (row_idx, _row_pin) in ROW_PINS.iter().enumerate() {
             unsafe {
                 // Drive row low
-                set_pin_low(row_pin);
+                set_pin_low(_row_pin);
                 // ~30µs settling delay (matches QMK matrix_io_delay default)
-                for _ in 0..150u32 {
+                for _ in 0..500u32 {
                     core::ptr::read_volatile(0xE000_E010 as *const u32);
                 }
             }
 
+            // Batch read IDR registers for GPIOA, GPIOB, GPIOC, and GPIOD once per row
+            let (idr_a, idr_b, idr_c, idr_d) = unsafe {
+                (
+                    (GPIOA_BASE as *const u32).add(IDR_OFFSET / 4).read_volatile(),
+                    (GPIOB_BASE as *const u32).add(IDR_OFFSET / 4).read_volatile(),
+                    (GPIOC_BASE as *const u32).add(IDR_OFFSET / 4).read_volatile(),
+                    (GPIOD_BASE as *const u32).add(IDR_OFFSET / 4).read_volatile(),
+                )
+            };
+
             for (col_idx, col_pin) in COL_PINS.iter().enumerate() {
-                let pressed = unsafe { !read_pin(col_pin) }; // COL2ROW: low = pressed
+                // Select pre-read IDR based on port and check if pin is low (pressed)
+                let idr = match col_pin.port {
+                    p if p == GPIOA_BASE => idr_a,
+                    p if p == GPIOB_BASE => idr_b,
+                    p if p == GPIOC_BASE => idr_c,
+                    _ => idr_d,
+                };
+                let pressed = (idr & (1 << col_pin.pin)) == 0;
 
                 // Bit position in debounced array
                 let bit_pos = row_idx * 21 + col_idx;
@@ -187,7 +209,7 @@ impl Matrix {
 
             unsafe {
                 // Release row (drive high)
-                set_pin_high(row_pin);
+                set_pin_high(_row_pin);
             }
         }
 

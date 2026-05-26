@@ -219,17 +219,36 @@ pub fn matrix_co(row: usize, col: usize) -> u8 {
 /// Slightly smarter version that uses x-position ordering.
 pub fn matrix_co_ordered(row: usize, col: usize) -> u8 {
     if row >= MATRIX_ROWS || col >= MATRIX_COLS { return NO_LED; }
-    // Count LEDs in this row and find the col-th one
-    let target_y = (row * 10) as u8;
-    let mut col_count: usize = 0;
-    for i in 0..100usize { // only main keyboard LEDs
-        let (_px, py) = LED_POSITIONS[i];
-        if py == target_y || (py > target_y.wrapping_sub(5) && py < target_y.wrapping_add(5)) {
-            if col_count == col { return i as u8; }
-            col_count += 1;
+    use core::sync::atomic::{AtomicBool, Ordering};
+    static INIT: AtomicBool = AtomicBool::new(false);
+    static mut ORDERED_TABLE: [[u8; MATRIX_COLS]; MATRIX_ROWS] = [[NO_LED; MATRIX_COLS]; MATRIX_ROWS];
+
+    if !INIT.load(Ordering::Relaxed) {
+        unsafe {
+            let mut table = [[NO_LED; MATRIX_COLS]; MATRIX_ROWS];
+            for r in 0..MATRIX_ROWS {
+                let target_y = (r * 10) as u8;
+                for c in 0..MATRIX_COLS {
+                    let mut col_count: usize = 0;
+                    let mut found = NO_LED;
+                    for i in 0..100usize {
+                        let (_px, py) = LED_POSITIONS[i];
+                        if py == target_y || (py > target_y.wrapping_sub(5) && py < target_y.wrapping_add(5)) {
+                            if col_count == c {
+                                found = i as u8;
+                                break;
+                            }
+                            col_count += 1;
+                        }
+                    }
+                    table[r][c] = found;
+                }
+            }
+            ORDERED_TABLE = table;
+            INIT.store(true, Ordering::Relaxed);
         }
     }
-    NO_LED
+    unsafe { ORDERED_TABLE[row][col] }
 }
 
 /// Map row/col to LED index(es). Returns count and led indices.
