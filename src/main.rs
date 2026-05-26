@@ -185,6 +185,7 @@ impl Device {
                         self.proto.rf_channel = ch as u8;
                         self.proto.ble_channel = ch as u8;
                         self.proto.build_link_cmd(CMD_SET_LINK);
+                        self.side.blink_rf(3);
                     }
                 }
             }
@@ -992,13 +993,16 @@ fn main() -> ! {
                         dev.proto.link_mode = LinkMode::from_u8(ch);
                         dev.proto.rf_channel = ch;
                         dev.proto.ble_channel = ch;
+                        dev.proto.build_link_cmd(CMD_SET_LINK);
+                        uart_flush!(&dev.proto);
+                        uart_wait_rx!(dev, 20);
                         for _ in 0..5 {
                             dev.proto.build_link_cmd(wireless::uart::CMD_NEW_ADV);
                             uart_flush!(&dev.proto);
-                            // 20ms wait with UART RX
                             uart_wait_rx!(dev, 20);
                             if dev.proto.f_rf_new_adv_ok { break; }
                         }
+                        dev.side.blink_rf(3);
                     }
                 } else {
                     dev.rf_sw_press_delay = 0;

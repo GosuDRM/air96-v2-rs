@@ -1,5 +1,14 @@
 # Changelog
 
+## v3.9.1 (2026-05-26)
+
+Fixed Bluetooth/2.4GHz pairing — NRF module must receive CMD_SET_LINK before CMD_NEW_ADV.
+
+### Fixed
+
+- **Pairing Root Cause** — Hold handler was sending `CMD_NEW_ADV` directly without first sending `CMD_SET_LINK` to switch the NRF module to the target channel. The NRF rejects pairing commands on the wrong channel. Added `CMD_SET_LINK` + flush + 20ms wait before the pairing retry loop, matching the dev_reset handler pattern.
+- **Pairing Visual Feedback** — Added `side.blink_rf(3)` to hold handler (pairing starts) and tap handler (channel switch), matching the USB mode switch feedback.
+
 ## v3.9.0 (2026-05-26)
 
 Fixed Bluetooth/2.4GHz pairing long-press timer and Caps/Num Lock hardware PWM override.
