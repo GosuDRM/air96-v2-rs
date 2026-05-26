@@ -245,12 +245,12 @@ impl Device {
             }
 
             // ── RGB matrix controls ────────────────────────────────────
-            keymap::KC_RGB_SPD => if pressed { self.rgb.speed = self.rgb.speed.saturating_sub(16); },
-            keymap::KC_RGB_SPI => if pressed { self.rgb.speed = self.rgb.speed.saturating_add(16); },
-            keymap::KC_RGB_VAI => if pressed { self.rgb.val = self.rgb.val.saturating_add(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } },
-            keymap::KC_RGB_VAD => if pressed { self.rgb.val = self.rgb.val.saturating_sub(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } },
-            keymap::KC_RGB_MOD => if pressed { self.rgb.next_mode(); },
-            keymap::KC_RGB_HUI => if pressed { self.rgb.hue = self.rgb.hue.wrapping_add(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } },
+            keymap::KC_RGB_SPD => if pressed { self.rgb.speed = self.rgb.speed.saturating_sub(16); self.save_config(); },
+            keymap::KC_RGB_SPI => if pressed { self.rgb.speed = self.rgb.speed.saturating_add(16); self.save_config(); },
+            keymap::KC_RGB_VAI => if pressed { self.rgb.val = self.rgb.val.saturating_add(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } self.save_config(); },
+            keymap::KC_RGB_VAD => if pressed { self.rgb.val = self.rgb.val.saturating_sub(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } self.save_config(); },
+            keymap::KC_RGB_MOD => if pressed { self.rgb.next_mode(); self.save_config(); },
+            keymap::KC_RGB_HUI => if pressed { self.rgb.hue = self.rgb.hue.wrapping_add(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } self.save_config(); },
 
             keymap::KC_MAC_TASK => {
                 if pressed {
@@ -789,6 +789,21 @@ fn main() -> ! {
         dev.side.colour = cfg.side_colour;
         dev.side.rgb_enabled = cfg.side_rgb;
         dev.sleep_enabled = cfg.sleep_enable;
+
+        dev.rgb.mode = cfg.rgb_mode;
+        dev.rgb.hue = cfg.rgb_hue;
+        dev.rgb.sat = cfg.rgb_sat;
+        dev.rgb.val = cfg.rgb_val;
+        dev.rgb.speed = cfg.rgb_speed;
+        dev.rgb.enabled = cfg.rgb_enabled;
+        if dev.rgb.mode == 0 {
+            dev.rgb.set_hsv(cfg.rgb_hue, cfg.rgb_sat, cfg.rgb_val);
+        }
+        if !dev.rgb.enabled {
+            dc_boost.set_low();
+            rgb_sdb1.set_low();
+            rgb_sdb2.set_low();
+        }
     }
 
     // ── Initial dial scan with debounce ──────────────────────────────
@@ -1314,6 +1329,12 @@ fn main() -> ! {
                 side_colour: dev.side.colour,
                 side_rgb: dev.side.rgb_enabled,
                 sleep_enable: dev.sleep_enabled,
+                rgb_mode: dev.rgb.mode,
+                rgb_hue: dev.rgb.hue,
+                rgb_sat: dev.rgb.sat,
+                rgb_val: dev.rgb.val,
+                rgb_speed: dev.rgb.speed,
+                rgb_enabled: dev.rgb.enabled,
             };
             eeprom::save(&cfg);
         }

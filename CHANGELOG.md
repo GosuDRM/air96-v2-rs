@@ -1,5 +1,16 @@
 # Changelog
 
+## v3.9.9 (2026-05-26)
+
+Added support for loading, applying, and saving main RGB matrix settings (mode, hue, sat, val, speed, enabled) in the emulated EEPROM, resolving startup default behavior and lack of animations across power cycles.
+
+### Fixed
+
+- **Main RGB Settings Load & Restore** — Configured the startup loader to parse and assign `rgb_mode`, `rgb_hue`, `rgb_sat`, `rgb_val`, `rgb_speed`, and `rgb_enabled` from stored flash configuration block into active `dev.rgb` fields. Includes support for shutting down physical boost/LED drivers at startup if RGB is configured as disabled.
+- **Main RGB Settings Save** — Configured the deferred EEPROM save block to serialize active RGB settings into the 16-byte `V2` layout.
+- **RGB Control Keycode Triggers** — Added immediate `save_config()` triggers to all main RGB matrix control keycodes (`KC_RGB_SPD`, `KC_RGB_SPI`, `KC_RGB_VAI`, `KC_RGB_VAD`, `KC_RGB_MOD`, `KC_RGB_HUI`) to flag changes for the deferred EEPROM writer.
+- **Enhanced Test Coverage** — Updated the `eeprom_defaults` unit test to explicitly check and assert the correct QMK-standard RGB fields on `UserConfig::default()`.
+
 ## v3.9.8 (2026-05-26)
 
 Optimized wireless mode standby battery consumption by halting the CPU in standby sleep mode.

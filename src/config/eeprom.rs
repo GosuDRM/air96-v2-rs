@@ -4,21 +4,28 @@
 //! a small user config block. This survives power cycles but has limited
 //! write endurance (~10k cycles per page).
 //!
-//! Config layout (8 bytes at offset 0):
-//!   [0] = magic flag (0xA5 = valid)
+//! Config layout (16 bytes at offset 0):
+//!   [0] = magic flag (0xA6 = valid v2 with main RGB settings, 0xA5 = v1)
 //!   [1] = side_mode
-//!   [2] = side_brightness (light)
+//!   [2] = side_brightness
 //!   [3] = side_speed
 //!   [4] = side_colour
 //!   [5] = side_rgb (bool)
 //!   [6] = sleep_enable (bool)
-//!   [7] = reserved
+//!   [7] = rgb_mode (u8)
+//!   [8] = rgb_hue (u8)
+//!   [9] = rgb_sat (u8)
+//!   [10] = rgb_val (u8)
+//!   [11] = rgb_speed (u8)
+//!   [12] = rgb_enabled (bool)
+//!   [13..15] = reserved / padding
 
 use stm32f0xx_hal::pac;
 
 /// Config page address: last 2KB page (page 63 of 64, 128K flash)
 const CONFIG_PAGE_ADDR: u32 = 0x0801_F800;
-const MAGIC_VALID: u8 = 0xA5;
+const MAGIC_VALID_V1: u8 = 0xA5;
+const MAGIC_VALID_V2: u8 = 0xA6;
 
 /// User config stored in flash
 #[derive(Debug, Clone, Copy)]
@@ -29,6 +36,13 @@ pub struct UserConfig {
     pub side_colour: u8,
     pub side_rgb: bool,
     pub sleep_enable: bool,
+    // ── Main RGB matrix settings ──────────────────────────────────────
+    pub rgb_mode: u8,
+    pub rgb_hue: u8,
+    pub rgb_sat: u8,
+    pub rgb_val: u8,
+    pub rgb_speed: u8,
+    pub rgb_enabled: bool,
 }
 
 impl Default for UserConfig {
@@ -40,32 +54,57 @@ impl Default for UserConfig {
             side_colour: 0,
             side_rgb: true,
             sleep_enable: true,
+            rgb_mode: 0,
+            rgb_hue: 255,
+            rgb_sat: 255,
+            rgb_val: 223,
+            rgb_speed: 223,
+            rgb_enabled: true,
         }
     }
 }
 
 /// Load user config from emulated EEPROM.
-/// Returns None if flash page is uninitialized (magic byte invalid).
+/// Returns None if flash page is uninitialized.
 pub fn load() -> Option<UserConfig> {
     let addr = CONFIG_PAGE_ADDR as *const u8;
     unsafe {
-        if *addr != MAGIC_VALID {
-            return None;
+        let magic = *addr;
+        if magic == MAGIC_VALID_V2 {
+            let ptr = addr.add(1);
+            Some(UserConfig {
+                side_mode:       *ptr,
+                side_brightness: *ptr.add(1),
+                side_speed:      *ptr.add(2),
+                side_colour:     *ptr.add(3),
+                side_rgb:        *ptr.add(4) != 0,
+                sleep_enable:    *ptr.add(5) != 0,
+                rgb_mode:        *ptr.add(6),
+                rgb_hue:         *ptr.add(7),
+                rgb_sat:         *ptr.add(8),
+                rgb_val:         *ptr.add(9),
+                rgb_speed:       *ptr.add(10),
+                rgb_enabled:     *ptr.add(11) != 0,
+            })
+        } else if magic == MAGIC_VALID_V1 {
+            let ptr = addr.add(1);
+            Some(UserConfig {
+                side_mode:       *ptr,
+                side_brightness: *ptr.add(1),
+                side_speed:      *ptr.add(2),
+                side_colour:     *ptr.add(3),
+                side_rgb:        *ptr.add(4) != 0,
+                sleep_enable:    *ptr.add(5) != 0,
+                ..Default::default()
+            })
+        } else {
+            None
         }
-        let ptr = addr.add(1);
-        Some(UserConfig {
-            side_mode:       *ptr,
-            side_brightness: *ptr.add(1),
-            side_speed:      *ptr.add(2),
-            side_colour:     *ptr.add(3),
-            side_rgb:        *ptr.add(4) != 0,
-            sleep_enable:    *ptr.add(5) != 0,
-        })
     }
 }
 
 /// Save user config to emulated EEPROM.
-/// Erases the config page first, then writes 8 bytes.
+/// Erases the config page first, then writes 16 bytes.
 /// WARNING: Must not be interrupted — disables interrupts during write.
 pub fn save(cfg: &UserConfig) {
     cortex_m::interrupt::free(|_| {
@@ -86,28 +125,48 @@ pub fn save(cfg: &UserConfig) {
             while flash.sr.read().bsy().bit() {}
             flash.cr.modify(|_, w| w.per().clear_bit());
 
-            // 4. Program 4 halfwords (8 bytes)
+            // 4. Program 8 halfwords (16 bytes)
             flash.cr.modify(|_, w| w.pg().set_bit());
 
             let ptr = CONFIG_PAGE_ADDR as *mut u16;
+            
             // Halfword 0: magic (low) | side_mode (high)
-            let hw0 = MAGIC_VALID as u16 | ((cfg.side_mode as u16) << 8);
+            let hw0 = MAGIC_VALID_V2 as u16 | ((cfg.side_mode as u16) << 8);
             core::ptr::write_volatile(ptr, hw0);
             while flash.sr.read().bsy().bit() {}
 
-            // Halfword 1: brightness | speed
+            // Halfword 1: side_brightness | side_speed
             let hw1 = (cfg.side_brightness as u16) | ((cfg.side_speed as u16) << 8);
             core::ptr::write_volatile(ptr.add(1), hw1);
             while flash.sr.read().bsy().bit() {}
 
-            // Halfword 2: colour | side_rgb
+            // Halfword 2: side_colour | side_rgb
             let hw2 = (cfg.side_colour as u16) | ((cfg.side_rgb as u16) << 8);
             core::ptr::write_volatile(ptr.add(2), hw2);
             while flash.sr.read().bsy().bit() {}
 
-            // Halfword 3: sleep_enable | reserved
-            let hw3 = cfg.sleep_enable as u16;
+            // Halfword 3: sleep_enable | rgb_mode
+            let hw3 = (cfg.sleep_enable as u16) | ((cfg.rgb_mode as u16) << 8);
             core::ptr::write_volatile(ptr.add(3), hw3);
+            while flash.sr.read().bsy().bit() {}
+
+            // Halfword 4: rgb_hue | rgb_sat
+            let hw4 = (cfg.rgb_hue as u16) | ((cfg.rgb_sat as u16) << 8);
+            core::ptr::write_volatile(ptr.add(4), hw4);
+            while flash.sr.read().bsy().bit() {}
+
+            // Halfword 5: rgb_val | rgb_speed
+            let hw5 = (cfg.rgb_val as u16) | ((cfg.rgb_speed as u16) << 8);
+            core::ptr::write_volatile(ptr.add(5), hw5);
+            while flash.sr.read().bsy().bit() {}
+
+            // Halfword 6: rgb_enabled | reserved (0)
+            let hw6 = cfg.rgb_enabled as u16;
+            core::ptr::write_volatile(ptr.add(6), hw6);
+            while flash.sr.read().bsy().bit() {}
+
+            // Halfword 7: reserved (0) | reserved (0)
+            core::ptr::write_volatile(ptr.add(7), 0);
             while flash.sr.read().bsy().bit() {}
 
             flash.cr.modify(|_, w| w.pg().clear_bit());
