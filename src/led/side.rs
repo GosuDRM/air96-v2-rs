@@ -526,7 +526,7 @@ impl SideLeds {
         }
 
         // 4b. Num Lock indicator (right side, white glow when on)
-        let num_lock = (keyboard_leds & 0x01) != 0;
+        let num_lock = (keyboard_leds & 0x01) != 0 || (proto.rf_led & 0x01) != 0;
         if num_lock {
             self.set_right(0xFF, 0xFF, 0xFF); // White
         }

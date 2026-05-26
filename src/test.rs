@@ -588,3 +588,64 @@ fn nkro_bitmap_generation_logic() {
     assert_ne!(bits[5] & (1 << 1), 0);
 }
 
+// ===== DEBOUNCE ALGORITHM =====
+#[test]
+fn matrix_sym_defer_pk_debouncing() {
+    let mut m = crate::keyboard::matrix::Matrix::new();
+    
+    // Test 1: Key press debounce
+    // Simulate key at row 0, col 2 being physically pressed.
+    // Set raw bit for row 0, col 2 to 1. (bit_pos = 0 * 21 + 2 = 2, so byte 0, bit 2)
+    m.raw[0] |= 1 << 2;
+    m.counters[0][2] = 10;
+    
+    // Decrement 9 times (9ms). Stability not reached yet.
+    for _ in 0..9 {
+        m.tick_debounce();
+    }
+    assert_eq!(m.counters[0][2], 1);
+    assert_eq!(m.debounced[0] & (1 << 2), 0); // Still debounced as 0 (not pressed)
+    assert!(m.pending_events.is_empty());
+    
+    // 10th tick (10ms). Stability reached.
+    m.tick_debounce();
+    assert_eq!(m.counters[0][2], 0);
+    assert_ne!(m.debounced[0] & (1 << 2), 0); // Debounced state updated to 1
+    assert_eq!(m.pending_events.len(), 1);
+    assert_eq!(m.pending_events[0].row, 0);
+    assert_eq!(m.pending_events[0].col, 2);
+    assert!(m.pending_events[0].pressed);
+    
+    // Test 2: Noise filtering (bounce back before stability)
+    m.pending_events.clear();
+    // Simulate key release: raw goes to 0, counter set to 10
+    m.raw[0] &= !(1 << 2);
+    m.counters[0][2] = 10;
+    
+    // Tick 3 times
+    for _ in 0..3 {
+        m.tick_debounce();
+    }
+    assert_eq!(m.counters[0][2], 7);
+    
+    // Key bounces back to 1 (pressed): raw set to 1, counter reset to 10 (simulate what scan() would do)
+    m.raw[0] |= 1 << 2;
+
+    m.counters[0][2] = 10;
+    
+    // Tick 9 times
+    for _ in 0..9 {
+        m.tick_debounce();
+    }
+    assert_eq!(m.debounced[0] & (1 << 2), 1 << 2); // Still debounced as 1 (pressed)
+    assert!(m.pending_events.is_empty());
+    
+    // 10th tick of new stability window
+    m.tick_debounce();
+    assert_eq!(m.counters[0][2], 0);
+    // Debounced state remains 1, no release event generated
+    assert_eq!(m.debounced[0] & (1 << 2), 1 << 2);
+    assert!(m.pending_events.is_empty());
+}
+
+

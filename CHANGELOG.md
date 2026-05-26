@@ -1,5 +1,23 @@
 # Changelog
 
+## v4.0.2 (2026-05-26)
+
+Fully implemented deferred stability debouncing, fixed the wireless Num Lock indicator, and optimized sleep manager and EEPROM loaders.
+
+### Fixed
+
+- **Wireless Num Lock Indicator** — Mapped the side LED Num Lock status to also read NRF co-processor RF LED status, ensuring the indicator reflects Num Lock state in both wired and wireless modes.
+- **EEPROM Volatile Loads** — Refactored the emulated EEPROM load block to use `core::ptr::read_volatile`, matching the flash write safety of `save()`.
+
+### Changed
+
+- **Debounce Algorithm Implementation** — Fully implemented the Symmetric Deferred Per-Key (`sym_defer_pk`) stability-based debouncing algorithm described in `v4.0.1` by storing raw matrix state and generating events from the 1ms SysTick handler.
+- **Sleep Manager Cleanup** — Cleaned up `SleepManager::tick` return signature to return `()` instead of unused wrapper vectors, removing unused imports.
+
+### Added
+
+- **Debounce Unit Tests** — Added `matrix_sym_defer_pk_debouncing()` to assert stability counter countdown, noise/bounce cancellation, and press/release event generation.
+
 ## v4.0.1 (2026-05-26)
 
 Rewrote debounce algorithm from eager lockout to deferred stability for reliable slow-key detection.

@@ -69,32 +69,32 @@ impl Default for UserConfig {
 pub fn load() -> Option<UserConfig> {
     let addr = CONFIG_PAGE_ADDR as *const u8;
     unsafe {
-        let magic = *addr;
+        let magic = core::ptr::read_volatile(addr);
         if magic == MAGIC_VALID_V2 {
             let ptr = addr.add(1);
             Some(UserConfig {
-                side_mode:       *ptr,
-                side_brightness: *ptr.add(1),
-                side_speed:      *ptr.add(2),
-                side_colour:     *ptr.add(3),
-                side_rgb:        *ptr.add(4) != 0,
-                sleep_enable:    *ptr.add(5) != 0,
-                rgb_mode:        *ptr.add(6),
-                rgb_hue:         *ptr.add(7),
-                rgb_sat:         *ptr.add(8),
-                rgb_val:         *ptr.add(9),
-                rgb_speed:       *ptr.add(10),
-                rgb_enabled:     *ptr.add(11) != 0,
+                side_mode:       core::ptr::read_volatile(ptr),
+                side_brightness: core::ptr::read_volatile(ptr.add(1)),
+                side_speed:      core::ptr::read_volatile(ptr.add(2)),
+                side_colour:     core::ptr::read_volatile(ptr.add(3)),
+                side_rgb:        core::ptr::read_volatile(ptr.add(4)) != 0,
+                sleep_enable:    core::ptr::read_volatile(ptr.add(5)) != 0,
+                rgb_mode:        core::ptr::read_volatile(ptr.add(6)),
+                rgb_hue:         core::ptr::read_volatile(ptr.add(7)),
+                rgb_sat:         core::ptr::read_volatile(ptr.add(8)),
+                rgb_val:         core::ptr::read_volatile(ptr.add(9)),
+                rgb_speed:       core::ptr::read_volatile(ptr.add(10)),
+                rgb_enabled:     core::ptr::read_volatile(ptr.add(11)) != 0,
             })
         } else if magic == MAGIC_VALID_V1 {
             let ptr = addr.add(1);
             Some(UserConfig {
-                side_mode:       *ptr,
-                side_brightness: *ptr.add(1),
-                side_speed:      *ptr.add(2),
-                side_colour:     *ptr.add(3),
-                side_rgb:        *ptr.add(4) != 0,
-                sleep_enable:    *ptr.add(5) != 0,
+                side_mode:       core::ptr::read_volatile(ptr),
+                side_brightness: core::ptr::read_volatile(ptr.add(1)),
+                side_speed:      core::ptr::read_volatile(ptr.add(2)),
+                side_colour:     core::ptr::read_volatile(ptr.add(3)),
+                side_rgb:        core::ptr::read_volatile(ptr.add(4)) != 0,
+                sleep_enable:    core::ptr::read_volatile(ptr.add(5)) != 0,
                 ..Default::default()
             })
         } else {

@@ -3,8 +3,6 @@
 //! Handles inactivity timeout, USB suspend detection, and sleep/wakeup sequence.
 //! All GosuDRM latency fixes applied (K1: inline wakeup, L1: reduced delays).
 
-use heapless::Vec;
-
 use crate::wireless::uart::{UartProtocol, CMD_HAND, CMD_SLEEP, CMD_SET_CONFIG, LinkMode, RfState};
 
 /// Sleep timing constants (port of ansi.h defines)
@@ -61,8 +59,7 @@ impl SleepManager {
 
     /// Main sleep state machine — port of Sleep_Handle (sleep.c:34-113)
     /// Called every 50ms by the main loop.
-    /// Returns true if a UART command was generated that needs sending.
-    pub fn tick(&mut self, proto: &mut UartProtocol, usb_suspended: bool) -> Option<Vec<u8, 64>> {
+    pub fn tick(&mut self, proto: &mut UartProtocol, usb_suspended: bool) {
         // ── Goto-sleep transition ──
         if self.f_goto_sleep {
             self.f_goto_sleep = false;
@@ -76,7 +73,7 @@ impl SleepManager {
                 // Power down handled by main.rs GPIO
             }
             self.f_wakeup_prepare = true;
-            return None; // CMD sent inline by build_link_cmd → caller handles TX
+            return; // CMD sent inline by build_link_cmd → caller handles TX
         }
 
         // ── Wakeup transition (K1 fix: also triggered inline by uart_send_report) ──
@@ -86,12 +83,12 @@ impl SleepManager {
             // Power-up GPIO handled by main.rs
             proto.build_link_cmd(CMD_HAND);
             // USB wakeup handled by main.rs if link_mode == USB
-            return None;
+            return;
         }
 
         // Block normal checks during sleep/wakeup transitions
         if self.f_goto_sleep || self.f_wakeup_prepare {
-            return None;
+            return;
         }
 
         // ── Normal operation: check sleep conditions ──
@@ -131,6 +128,5 @@ impl SleepManager {
                 }
             }
         }
-        None
     }
 }

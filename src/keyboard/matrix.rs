@@ -108,6 +108,8 @@ pub struct KeyEvent {
 pub struct Matrix {
     // Debounce state: 6 rows × 21 cols = 126 bits → 16 bytes
     pub(crate) debounced: [u8; 16],
+    // Raw state: 6 rows × 21 cols = 126 bits → 16 bytes
+    pub(crate) raw: [u8; 16],
     // Per-key debounce counters (remaining ms of stability required)
     pub(crate) counters: [[u8; 21]; 6],
     // Pending events generated in tick_debounce() upon timer expiry
@@ -124,6 +126,7 @@ impl Matrix {
     pub fn new() -> Self {
         Self {
             debounced: [0; 16],
+            raw: [0; 16],
             counters: [[0; 21]; 6],
             pending_events: heapless::Vec::new(),
         }
@@ -152,8 +155,6 @@ impl Matrix {
     /// Triggers instantly on first state change (0ms latency).
     /// Lockout prevents bounce; counter reset kills crosstalk phantoms.
     pub fn scan(&mut self) -> heapless::Vec<KeyEvent, 32> {
-        let mut events: heapless::Vec<KeyEvent, 32> = heapless::Vec::new();
-
         for (row_idx, _row_pin) in ROW_PINS.iter().enumerate() {
             unsafe {
                 set_pin_low(_row_pin);
@@ -170,24 +171,20 @@ impl Matrix {
                 let bit_mask = 1u8 << (bit_pos % 8);
 
                 let debounced_bit = (self.debounced[byte_idx] & bit_mask) != 0;
+                let raw_bit = (self.raw[byte_idx] & bit_mask) != 0;
                 let ctr = &mut self.counters[row_idx][col_idx];
 
-                if *ctr > 0 {
-                    // Lockout active — decrement and ignore
-                    *ctr -= 1;
-                } else if debounced_bit != pressed {
-                    // Instant trigger (0ms) — commit immediately
+                if pressed != raw_bit {
                     if pressed {
-                        self.debounced[byte_idx] |= bit_mask;
+                        self.raw[byte_idx] |= bit_mask;
                     } else {
-                        self.debounced[byte_idx] &= !bit_mask;
+                        self.raw[byte_idx] &= !bit_mask;
                     }
-                    let _ = events.push(KeyEvent {
-                        row: row_idx as u8,
-                        col: col_idx as u8,
-                        pressed,
-                    });
-                    *ctr = 10; // ~5ms lockout at ~500µs/scan
+                    if pressed != debounced_bit {
+                        *ctr = 10; // 10ms stability timer
+                    } else {
+                        *ctr = 0; // returned to debounced state
+                    }
                 }
             }
 
@@ -199,11 +196,45 @@ impl Matrix {
             }
         }
 
+        let mut events = heapless::Vec::new();
+        for ev in &self.pending_events {
+            let _ = events.push(*ev);
+        }
+        self.pending_events.clear();
         events
     }
 
-    /// No-op — lockout decremented in scan() loop per-scan, not per-tick.
-    pub fn tick_debounce(&mut self) {}
+    pub fn tick_debounce(&mut self) {
+        for row_idx in 0..6 {
+            for col_idx in 0..21 {
+                let ctr = &mut self.counters[row_idx][col_idx];
+                if *ctr > 0 {
+                    *ctr -= 1;
+                    if *ctr == 0 {
+                        let bit_pos = row_idx * 21 + col_idx;
+                        let byte_idx = bit_pos / 8;
+                        let bit_mask = 1u8 << (bit_pos % 8);
+
+                        let raw_bit = (self.raw[byte_idx] & bit_mask) != 0;
+                        let debounced_bit = (self.debounced[byte_idx] & bit_mask) != 0;
+
+                        if raw_bit != debounced_bit {
+                            if raw_bit {
+                                self.debounced[byte_idx] |= bit_mask;
+                            } else {
+                                self.debounced[byte_idx] &= !bit_mask;
+                            }
+                            let _ = self.pending_events.push(KeyEvent {
+                                row: row_idx as u8,
+                                col: col_idx as u8,
+                                pressed: raw_bit,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /// Check if Escape key (row 0, col 0) is held — for DFU entry.
     /// Call after `init_pins()`. Samples 3 times with 30µs settling to
@@ -259,7 +290,7 @@ impl Matrix {
 
     #[cfg(not(all(target_arch = "arm", not(test))))]
     pub unsafe fn enter_bootloader() -> ! {
-        loop {}
+        panic!("enter_bootloader is only supported on ARM target");
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -325,6 +356,6 @@ impl Matrix {
 
     #[cfg(not(all(target_arch = "arm", not(test))))]
     pub unsafe fn jump_to_bootloader() -> ! {
-        loop {}
+        panic!("jump_to_bootloader is only supported on ARM target");
     }
 }
