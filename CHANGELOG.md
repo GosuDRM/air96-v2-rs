@@ -1,5 +1,15 @@
 # Changelog
 
+## v3.9.0 (2026-05-26)
+
+Fixed Bluetooth/2.4GHz pairing long-press timer and Caps/Num Lock hardware PWM override.
+
+### Fixed
+
+- **Pairing Long-Press Timer** — `rf_sw_press_delay` changed from 60 to 20. Counter runs in 50ms block, so 60×50ms=3s was required to enter pairing. Now 20×50ms=1s for all fn+1/2/3/4 modes.
+- **Caps/Num Lock PWM Override** — LED 55 (Caps) and LED 33 (Num) forced to white at hardware PWM level. Survives brightness=0 and animations.
+- **Host LED Report Parsing** — `pull_raw_output()` added for reliable LED state capture.
+
 ## v3.8.8 (2026-05-26)
 
 Fixed Caps Lock / Num Lock LED indicators — hardware PWM override ensures key LEDs glow white regardless of RGB brightness setting.
