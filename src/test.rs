@@ -220,16 +220,19 @@ use crate::config::eeprom;
 
 // ===== KEYMAP RGB CONTROLS =====
 #[test] fn mac_fn_rgb_controls() {
-    assert_eq!(keymap::LAYER_MAC_FN[4][8], keymap::KC_RGB_SPD);
+    assert_eq!(keymap::LAYER_MAC_FN[4][8], keymap::KC_RGB_MOD);
     assert_eq!(keymap::LAYER_MAC_FN[4][9], keymap::KC_RGB_SPI);
     assert_eq!(keymap::LAYER_MAC_FN[4][15], keymap::KC_RGB_VAI);
-    assert_eq!(keymap::LAYER_MAC_FN[5][15], keymap::KC_RGB_MOD);
-    assert_eq!(keymap::LAYER_MAC_FN[5][16], keymap::KC_RGB_VAD);
+    assert_eq!(keymap::LAYER_MAC_FN[5][14], keymap::KC_RGB_SPD); // fn+LEFT
+    assert_eq!(keymap::LAYER_MAC_FN[5][15], keymap::KC_RGB_VAD); // fn+DOWN
+    assert_eq!(keymap::LAYER_MAC_FN[5][16], keymap::KC_RGB_SPI); // fn+RIGHT
     assert_eq!(keymap::LAYER_MAC_FN[5][17], keymap::KC_RGB_HUI);
 }
 #[test] fn win_fn_rgb_controls() {
-    assert_eq!(keymap::LAYER_WIN_FN[4][8], keymap::KC_RGB_SPD);
-    assert_eq!(keymap::LAYER_WIN_FN[5][15], keymap::KC_RGB_MOD);
+    assert_eq!(keymap::LAYER_WIN_FN[4][8], keymap::KC_RGB_MOD);
+    assert_eq!(keymap::LAYER_WIN_FN[5][14], keymap::KC_RGB_SPD); // fn+LEFT
+    assert_eq!(keymap::LAYER_WIN_FN[5][15], keymap::KC_RGB_VAD); // fn+DOWN
+    assert_eq!(keymap::LAYER_WIN_FN[5][16], keymap::KC_RGB_SPI); // fn+RIGHT
 }
 #[test] fn fn_layer_side_controls() {
     assert_eq!(keymap::LAYER_FN[4][4], keymap::KC_RGB_TEST);

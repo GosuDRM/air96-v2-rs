@@ -157,12 +157,12 @@ pub const LAYER_MAC_FN: [[u16; 21]; 6] = [
      0x49, NR, NR, NR, NR, NR, NR],
     // Row 3: all transparent
     [NR; 21],
-    // Row 4: MO(4) at 0,7,12; RGB_SPD at 8, RGB_SPI at 9; RGB_VAI at 15
-    [MO | 4, NR, NR, NR, NR, NR, NR, MO | 4, KC_RGB_SPD, KC_RGB_SPI, NR, NR, MO | 4,
+    // Row 4: MO(4) at 0,7,12; RGB_MOD at 8, RGB_SPI at 9; RGB_VAI at 15 (fn+UP)
+    [MO | 4, NR, NR, NR, NR, NR, NR, MO | 4, KC_RGB_MOD, KC_RGB_SPI, NR, NR, MO | 4,
      NR, NR, KC_RGB_VAI, NR, NR, NR, NR, NR],
-    // Row 5: RGB_MOD at 15, RGB_VAD at 16, RGB_HUI at 17
-    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR,
-     KC_RGB_MOD, KC_RGB_VAD, KC_RGB_HUI, NR, NR, NR],
+    // Row 5: fn+LEFT=SPD at 14, fn+DOWN=VAD at 15, fn+RIGHT=SPI at 16, HUI at 17
+    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR,
+     KC_RGB_SPD, KC_RGB_VAD, KC_RGB_SPI, KC_RGB_HUI, NR, NR, NR],
 ];
 
 // ═══════════════════════════════════════════════════════════════════
@@ -206,12 +206,12 @@ pub const LAYER_WIN_FN: [[u16; 21]; 6] = [
      0x49, NR, NR, NR, NR, NR, NR],
     // Row 3: all transparent
     [NR; 21],
-    // Row 4: same as Mac Fn (MO(4), RGB controls)
-    [MO | 4, NR, NR, NR, NR, NR, NR, MO | 4, KC_RGB_SPD, KC_RGB_SPI, NR, NR, MO | 4,
+    // Row 4: same as Mac Fn (MO(4), RGB_MOD at 8, RGB_SPI at 9, fn+UP=VAI)
+    [MO | 4, NR, NR, NR, NR, NR, NR, MO | 4, KC_RGB_MOD, KC_RGB_SPI, NR, NR, MO | 4,
      NR, NR, KC_RGB_VAI, NR, NR, NR, NR, NR],
-    // Row 5: same as Mac Fn (RGB_MOD, RGB_VAD, RGB_HUI)
-    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR,
-     KC_RGB_MOD, KC_RGB_VAD, KC_RGB_HUI, NR, NR, NR],
+    // Row 5: fn+LEFT=SPD at 14, fn+DOWN=VAD at 15, fn+RIGHT=SPI at 16, HUI at 17
+    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR,
+     KC_RGB_SPD, KC_RGB_VAD, KC_RGB_SPI, KC_RGB_HUI, NR, NR, NR],
 ];
 
 // ═══════════════════════════════════════════════════════════════════

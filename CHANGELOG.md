@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.9.3 (2026-05-26)
+
+Remapped fn+arrow keys for intuitive RGB control.
+
+### Changed
+
+- **fn+Arrow RGB Mapping** — fn+UP = brightness up (VAI), fn+DOWN = brightness down (VAD), fn+LEFT = speed down (SPD), fn+RIGHT = speed up (SPI). Mode change (MOD) moved to fn+8. Previously fn+DOWN was mode change and fn+RIGHT was brightness down.
+
 ## v3.9.2 (2026-05-26)
 
 Fixed missed keystrokes — lockout debounce was double-decrementing causing premature expiry.
