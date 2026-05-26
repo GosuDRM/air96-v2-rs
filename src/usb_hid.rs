@@ -124,7 +124,7 @@ impl<'a> UsbHid<'a> {
         let consumer = HIDClass::new(bus, MediaKeyboardReport::desc(), 8);
         let system  = HIDClass::new(bus, SystemControlReport16::desc(), 8);
         let device = UsbDeviceBuilder::new(bus, UsbVidPid(USB_VID, USB_PID))
-            .manufacturer("GosuDRM")
+            .manufacturer("NuPhy")
             .product("Air96 V2 Keyboard")
             .serial_number("v4.0.2")
             .device_class(0x00)
