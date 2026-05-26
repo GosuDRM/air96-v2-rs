@@ -1,5 +1,18 @@
 # Changelog
 
+## v4.0.1 (2026-05-26)
+
+Rewrote debounce algorithm from eager lockout to deferred stability for reliable slow-key detection.
+
+### Changed
+
+- **Debounce Algorithm** — Changed from sym_eager_pk (instant trigger + lockout) to sym_defer_pk (stability timer). `scan()` now detects raw state changes and initializes a per-key stability counter. `tick_debounce()` decrements counters and generates events only when the key has been stable for the full debounce window. This eliminates phantom press/release cycles during slow key transitions.
+- **Debounce Window** — Increased from 5ms to 10ms to accommodate slower mechanical switch settling times.
+
+### Added
+
+- **Debounce Unit Tests** — `matrix_sym_defer_pk_debouncing()` validates counter decrement, event generation on expiry, and noise filtering.
+
 ## v4.0.0 (2026-05-26)
 
 Aligned keyboard Fn hotkeys with physical legends on the Air96 V2 keycaps, and implemented Tap-Hold timer logic for FN + backslash to cycle backlight styles / show battery.
