@@ -467,9 +467,9 @@ use crate::config::eeprom;
     let c = eeprom::UserConfig::default();
     assert_eq!(c.side_mode, 0); assert_eq!(c.side_brightness, 3);
     assert_eq!(c.side_speed, 2); assert!(c.side_rgb); assert!(c.sleep_enable);
-    assert_eq!(c.rgb_mode, 0); assert_eq!(c.rgb_hue, 255);
-    assert_eq!(c.rgb_sat, 255); assert_eq!(c.rgb_val, 223);
-    assert_eq!(c.rgb_speed, 223); assert!(c.rgb_enabled);
+    assert_eq!(c.rgb_mode, 4); assert_eq!(c.rgb_hue, 0);
+    assert_eq!(c.rgb_sat, 255); assert_eq!(c.rgb_val, 255);
+    assert_eq!(c.rgb_speed, 127); assert!(c.rgb_enabled);
 }
 
 // ===== USB HID REPORT TYPES =====

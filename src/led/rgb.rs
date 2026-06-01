@@ -230,12 +230,12 @@ impl RgbMatrix {
             buffer: [[0; 3]; LED_COUNT],
             dirty1: true,
             dirty2: true,
-            mode: 0,
+            mode: 4,   // CYCLE_LEFT_RIGHT — matches C reference default
             anim_tick: 0,
-            hue: 255,
-            sat: 255,
-            val: 223,  // QMK default: 255 - VAL_STEP*2 = 223
-            speed: 223, // QMK default: 255 - SPD_STEP*2 = 223
+            hue: 0,    // RGB_MATRIX_DEFAULT_HUE
+            sat: 255,  // RGB_MATRIX_DEFAULT_SAT
+            val: 255,  // RGB_MATRIX_DEFAULT_VAL (= RGB_MATRIX_MAXIMUM_BRIGHTNESS)
+            speed: 127, // RGB_MATRIX_DEFAULT_SPD (= UINT8_MAX / 2)
             enabled: true,
             suspended: false,
             hit_count: 0,

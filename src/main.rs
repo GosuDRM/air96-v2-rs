@@ -1142,11 +1142,11 @@ fn main() -> ! {
                         // Reset config (M15 fix: full device_reset_init)
                         dev.side.reset();
                         dev.rgb.enabled = true;
-                        dev.rgb.hue = 255; dev.rgb.sat = 255;
-                        dev.rgb.val = 223;   // QMK default brightness
-                        dev.rgb.speed = 223; // QMK default speed
-                        dev.rgb.mode = 0;    // QMK default mode
-                        dev.rgb.set_hsv(255, 255, 223);
+                        dev.rgb.hue = 0; dev.rgb.sat = 255;
+                        dev.rgb.val = 255;   // RGB_MATRIX_DEFAULT_VAL
+                        dev.rgb.speed = 127; // RGB_MATRIX_DEFAULT_SPD
+                        dev.rgb.mode = 4;    // CYCLE_LEFT_RIGHT
+                        dev.rgb.set_hsv(0, 255, 255);
                         dev.f_bat_hold = false;
                         dev.active_layers = [0, 0, 0, 0]; dev.active_layer_count = 1;
                         if dev.proto.sys_sw_state == 0xA2 {
