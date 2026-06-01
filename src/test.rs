@@ -596,64 +596,97 @@ fn nkro_bitmap_generation_logic() {
     assert_ne!(bits[5] & (1 << 1), 0);
 }
 
-// ===== DEBOUNCE ALGORITHM =====
-#[test]
-fn matrix_sym_defer_pk_debouncing() {
-    let mut m = crate::keyboard::matrix::Matrix::new();
-    
-    // Test 1: Key press debounce
-    // Simulate key at row 0, col 2 being physically pressed.
-    // Set raw bit for row 0, col 2 to 1. (bit_pos = 0 * 21 + 2 = 2, so byte 0, bit 2)
-    m.raw[0] |= 1 << 2;
-    m.counters[0][2] = 10;
-    
-    // Decrement 9 times (9ms). Stability not reached yet.
-    for _ in 0..9 {
-        m.tick_debounce();
-    }
-    assert_eq!(m.counters[0][2], 1);
-    assert_eq!(m.debounced[0] & (1 << 2), 0); // Still debounced as 0 (not pressed)
-    assert!(m.pending_events.is_empty());
-    
-    // 10th tick (10ms). Stability reached.
-    m.tick_debounce();
-    assert_eq!(m.counters[0][2], 0);
-    assert_ne!(m.debounced[0] & (1 << 2), 0); // Debounced state updated to 1
-    assert_eq!(m.pending_events.len(), 1);
-    assert_eq!(m.pending_events[0].row, 0);
-    assert_eq!(m.pending_events[0].col, 2);
-    assert!(m.pending_events[0].pressed);
-    
-    // Test 2: Noise filtering (bounce back before stability)
-    m.pending_events.clear();
-    // Simulate key release: raw goes to 0, counter set to 10
-    m.raw[0] &= !(1 << 2);
-    m.counters[0][2] = 10;
-    
-    // Tick 3 times
-    for _ in 0..3 {
-        m.tick_debounce();
-    }
-    assert_eq!(m.counters[0][2], 7);
-    
-    // Key bounces back to 1 (pressed): raw set to 1, counter reset to 10 (simulate what scan() would do)
-    m.raw[0] |= 1 << 2;
+// ===== DEBOUNCE ALGORITHM (QMK sym_eager_pk, DEBOUNCE=5) =====
 
-    m.counters[0][2] = 10;
-    
-    // Tick 9 times
-    for _ in 0..9 {
-        m.tick_debounce();
+/// Mirror of C reference `quantum/debounce/sym_eager_pk.c` `transfer_matrix_values`.
+#[test]
+fn matrix_sym_eager_pk_eager_event_on_first_change() {
+    use crate::keyboard::matrix::eager_pk_step;
+
+    // Idle: cooked=0, ctr=0. Press arrives.
+    let (cooked, ctr, ev) = eager_pk_step(true, false, 0);
+    assert!(cooked);
+    assert_eq!(ctr, 5);
+    assert_eq!(ev, Some(true));
+}
+
+#[test]
+fn matrix_sym_eager_pk_lockout_suppresses_bounce() {
+    use crate::keyboard::matrix::eager_pk_step;
+
+    // Mid-lockout (ctr=3). Switch bounces back; no event, cooked unchanged.
+    let (cooked, ctr, ev) = eager_pk_step(false, true, 3);
+    assert!(cooked, "cooked bit must not flip during lockout");
+    assert_eq!(ctr, 3, "lockout counter unchanged");
+    assert!(ev.is_none());
+}
+
+#[test]
+fn matrix_sym_eager_pk_release_after_lockout_expires() {
+    use crate::keyboard::matrix::eager_pk_step;
+
+    // After lockout (ctr=0), release fires immediately.
+    let (cooked, ctr, ev) = eager_pk_step(false, true, 0);
+    assert!(!cooked);
+    assert_eq!(ctr, 5);
+    assert_eq!(ev, Some(false));
+}
+
+#[test]
+fn matrix_sym_eager_pk_one_key_short_mash() {
+    use crate::keyboard::matrix::eager_pk_step;
+    use crate::keyboard::matrix::DEBOUNCE_MS;
+
+    // Mirrors C reference `sym_eager_pk_tests.cpp::OneKeyShort1`:
+    // DOWN at t=0, UP at t=1, UP-event at t=5, DOWN at t=6, DOWN-event at t=10.
+    // Tracks (debounced, counter) through the scan() events and the
+    // 1ms tick decrements that occur between them.
+
+    let mut cooked = false;
+    let mut ctr: u8 = 0;
+
+    // t=0: scan — DOWN arrives. Lockout was 0 → fire.
+    let (c, n, e) = eager_pk_step(true, cooked, ctr);
+    cooked = c; ctr = n;
+    assert_eq!(e, Some(true));
+    assert!(cooked);
+    assert_eq!(ctr, DEBOUNCE_MS);
+
+    // t=0..4: 5 ms of ticks — counter decrements to 0.
+    for _ in 0..5 {
+        ctr = ctr.saturating_sub(1);
     }
-    assert_eq!(m.debounced[0] & (1 << 2), 1 << 2); // Still debounced as 1 (pressed)
-    assert!(m.pending_events.is_empty());
-    
-    // 10th tick of new stability window
+    assert_eq!(ctr, 0);
+
+    // t=5: scan — UP arrives. ctr=0 → fire UP.
+    let (c, n, e) = eager_pk_step(false, cooked, ctr);
+    cooked = c; ctr = n;
+    assert_eq!(e, Some(false));
+    assert!(!cooked);
+    assert_eq!(ctr, DEBOUNCE_MS);
+
+    // t=5..9: 5 ms of ticks.
+    for _ in 0..5 {
+        ctr = ctr.saturating_sub(1);
+    }
+    assert_eq!(ctr, 0);
+
+    // t=10: scan — DOWN again. ctr=0 → fire DOWN.
+    let (c, n, e) = eager_pk_step(true, cooked, ctr);
+    cooked = c; ctr = n;
+    assert_eq!(e, Some(true));
+    assert!(cooked);
+    assert_eq!(ctr, DEBOUNCE_MS);
+}
+
+#[test]
+fn matrix_sym_eager_pk_lockout_clamps_at_zero() {
+    let mut m = crate::keyboard::matrix::Matrix::new();
+    m.counters[0][0] = 1;
     m.tick_debounce();
-    assert_eq!(m.counters[0][2], 0);
-    // Debounced state remains 1, no release event generated
-    assert_eq!(m.debounced[0] & (1 << 2), 1 << 2);
-    assert!(m.pending_events.is_empty());
+    assert_eq!(m.counters[0][0], 0);
+    m.tick_debounce();
+    assert_eq!(m.counters[0][0], 0, "counter must clamp, not underflow");
 }
 
 

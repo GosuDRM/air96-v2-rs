@@ -105,14 +105,36 @@ pub struct KeyEvent {
     pub pressed: bool,
 }
 
+/// Per-key debounce lockout (ms). Matches `DEBOUNCE` in
+/// `keyboards/air96_v2/ansi/keyboard.json` and `DEBOUNCE` in
+/// `quantum/debounce/sym_eager_pk.c`.
+pub(crate) const DEBOUNCE_MS: u8 = 5;
+
+/// Pure sym_eager_pk debounce step. Given the raw pin state, current
+/// debounced bit, and remaining lockout, returns the new debounced bit,
+/// the new lockout counter, and `Some(pressed)` if a debounced event
+/// fires. Mirrors `transfer_matrix_values()` in
+/// `quantum/debounce/sym_eager_pk.c`.
+pub(crate) fn eager_pk_step(
+    pressed: bool,
+    debounced_bit: bool,
+    ctr: u8,
+) -> (bool, u8, Option<bool>) {
+    if pressed != debounced_bit && ctr == 0 {
+        (pressed, DEBOUNCE_MS, Some(pressed))
+    } else {
+        (debounced_bit, ctr, None)
+    }
+}
+
 pub struct Matrix {
-    // Debounce state: 6 rows × 21 cols = 126 bits → 16 bytes
+    // Debounced state: 6 rows × 21 cols = 126 bits → 16 bytes
     pub(crate) debounced: [u8; 16],
-    // Raw state: 6 rows × 21 cols = 126 bits → 16 bytes
+    // Raw (unfiltered) state: 6 rows × 21 cols = 126 bits → 16 bytes
     pub(crate) raw: [u8; 16],
-    // Per-key debounce counters (remaining ms of stability required)
+    // Per-key lockout counter (remaining ms before next change can be registered)
     pub(crate) counters: [[u8; 21]; 6],
-    // Pending events generated in tick_debounce() upon timer expiry
+    // Pending events generated eagerly in scan() on first state change
     pub(crate) pending_events: heapless::Vec<KeyEvent, 32>,
 }
 
@@ -151,9 +173,11 @@ impl Matrix {
         }
     }
 
-    /// Full matrix scan — eager debounce with per-pin reads + unselect delay.
-    /// Triggers instantly on first state change (0ms latency).
-    /// Lockout prevents bounce; counter reset kills crosstalk phantoms.
+    /// Full matrix scan — QMK `sym_eager_pk` debouncing with per-pin reads.
+    /// On the first scan that detects a change, the event fires immediately
+    /// (0ms latency) and a 5ms per-key lockout absorbs bounce. Mirrors
+    /// `quantum/debounce/sym_eager_pk.c` with `DEBOUNCE=5` from
+    /// `keyboards/air96_v2/ansi/keyboard.json`.
     pub fn scan(&mut self) -> heapless::Vec<KeyEvent, 32> {
         for (row_idx, _row_pin) in ROW_PINS.iter().enumerate() {
             unsafe {
@@ -180,11 +204,22 @@ impl Matrix {
                     } else {
                         self.raw[byte_idx] &= !bit_mask;
                     }
-                    if pressed != debounced_bit {
-                        *ctr = 10; // 10ms stability timer
-                    } else {
-                        *ctr = 0; // returned to debounced state
-                    }
+                }
+
+                let (new_bit, new_ctr, fired) =
+                    eager_pk_step(pressed, debounced_bit, *ctr);
+                if new_bit {
+                    self.debounced[byte_idx] |= bit_mask;
+                } else {
+                    self.debounced[byte_idx] &= !bit_mask;
+                }
+                *ctr = new_ctr;
+                if let Some(p) = fired {
+                    let _ = self.pending_events.push(KeyEvent {
+                        row: row_idx as u8,
+                        col: col_idx as u8,
+                        pressed: p,
+                    });
                 }
             }
 
@@ -204,33 +239,15 @@ impl Matrix {
         events
     }
 
+    /// Decrement per-key lockout counters by 1ms. No event generation here —
+    /// `scan()` emits events eagerly on first state change. When a counter
+    /// reaches 0, the next scan that detects a new change will register it.
     pub fn tick_debounce(&mut self) {
         for row_idx in 0..6 {
             for col_idx in 0..21 {
                 let ctr = &mut self.counters[row_idx][col_idx];
                 if *ctr > 0 {
                     *ctr -= 1;
-                    if *ctr == 0 {
-                        let bit_pos = row_idx * 21 + col_idx;
-                        let byte_idx = bit_pos / 8;
-                        let bit_mask = 1u8 << (bit_pos % 8);
-
-                        let raw_bit = (self.raw[byte_idx] & bit_mask) != 0;
-                        let debounced_bit = (self.debounced[byte_idx] & bit_mask) != 0;
-
-                        if raw_bit != debounced_bit {
-                            if raw_bit {
-                                self.debounced[byte_idx] |= bit_mask;
-                            } else {
-                                self.debounced[byte_idx] &= !bit_mask;
-                            }
-                            let _ = self.pending_events.push(KeyEvent {
-                                row: row_idx as u8,
-                                col: col_idx as u8,
-                                pressed: raw_bit,
-                            });
-                        }
-                    }
                 }
             }
         }

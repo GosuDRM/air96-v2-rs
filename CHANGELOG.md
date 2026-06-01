@@ -1,5 +1,21 @@
 # Changelog
 
+## v4.1.2 (2026-06-02)
+
+Restored QMK `sym_eager_pk` debouncing to match the C reference firmware, fixing same-key rapid-press latency.
+
+### Fixed
+
+- **Same-Key Latency** — Reverted `matrix::scan()` from `sym_defer_pk` (10ms stability timer per edge) back to QMK's `sym_eager_pk` (0ms first-event latency, 5ms per-key lockout). With `sym_defer_pk`, a release→press cycle faster than 10ms silently dropped the second press because the stability counter was reset by the re-press before it could expire. `sym_eager_pk` matches `quantum/debounce/sym_eager_pk.c` from the C reference (`keyboards/air96_v2/ansi/keyboard.json` `DEBOUNCE=5`) — the first scan that detects a change emits the event immediately, and a 5ms lockout absorbs bounce. Rapid press→release→press cycles now register each edge as it happens (bounce-filtered only within the 5ms lockout window).
+
+### Changed
+
+- **Debounce Core** — Extracted the per-key decision into a pure `eager_pk_step(pressed, debounced_bit, ctr) -> (new_bit, new_ctr, Option<bool>)` helper so the algorithm is unit-testable without hardware pins. `scan()` updates `raw` then calls the helper for each key; `tick_debounce()` is now a pure counter decrementor (no event generation, no debounced-bit mutation).
+
+### Added
+
+- **Debounce Unit Tests** — `matrix_sym_eager_pk_*` tests cover eager event on first change, lockout suppression of bounce, post-lockout release, the C reference's `OneKeyShort1` press-release-press sequence, and counter underflow clamping.
+
 ## v4.0.2 (2026-05-26)
 
 Fully implemented deferred stability debouncing, fixed the wireless Num Lock indicator, and optimized sleep manager and EEPROM loaders.
