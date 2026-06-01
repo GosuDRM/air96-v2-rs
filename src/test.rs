@@ -401,19 +401,27 @@ use crate::config::eeprom;
     p.rf_battery = 45; // medium orange battery
 
     // First standard update to clear bat_init
-    sl.update(&p, 1, 0, false);
+    let mut bat_hold = false;
+    sl.update(&p, 1, 0, &mut bat_hold);
 
     // Standard update with bat_hold = false after timeout -> displays scaled blue color
     sl.play_cnt = 100; // allow animation update
-    sl.update(&p, 6000, 0, false);
+    sl.update(&p, 6000, 0, &mut bat_hold);
     assert_eq!(sl.output[0], [0, 0, 96]);
     assert_eq!(sl.output[9], [0, 0, 96]);
 
     // Update with bat_hold = true -> overrides right side to orange battery display
     sl.play_cnt = 100; // allow animation update
-    sl.update(&p, 1, 0, true);
+    bat_hold = true;
+    sl.update(&p, 1, 0, &mut bat_hold);
     assert_eq!(sl.output[9], [128, 64, 0]);
     assert_eq!(sl.output[0], [0, 0, 96]);
+    assert!(bat_hold, "f_bat_hold should remain true within 10s window");
+
+    // Auto-clear after 10s continuous hold (port of side.c:817-830)
+    sl.play_cnt = 100;
+    sl.update(&p, 11_000, 0, &mut bat_hold);
+    assert!(!bat_hold, "f_bat_hold should auto-clear after 10s");
 }
 
 

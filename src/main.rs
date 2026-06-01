@@ -32,23 +32,31 @@ use config::eeprom::{self, UserConfig};
 use usb_hid::UsbHid;
 
 // ── SysTick tick flag ──────────────────────────────────────────────
+// Atomic read+clear via PRIMASK critical section. The precompiled
+// core for thumbv6m-none-eabi on this toolchain doesn't expose
+// AtomicBool::swap/compare_exchange, so we use `cortex_m::interrupt::free`
+// which disables interrupts on this single-core Cortex-M0+ for the
+// duration of the read+clear, eliminating the TOCTOU race that the
+// previous `static mut bool` had.
 static mut TICK_FLAG: bool = false;
 
 /// Wait for a SysTick interrupt. Returns true when tick received.
 fn tick_arrived() -> bool {
-    unsafe {
+    cortex_m::interrupt::free(|_| unsafe {
         if TICK_FLAG {
             TICK_FLAG = false;
             true
         } else {
             false
         }
-    }
+    })
 }
 
 #[exception]
 fn SysTick() {
-    unsafe { TICK_FLAG = true; }
+    cortex_m::interrupt::free(|_| unsafe {
+        TICK_FLAG = true;
+    });
 }
 
 struct Device {
@@ -450,7 +458,9 @@ impl Device {
             self.sleep.on_activity();
 
             // Register hit for reactive RGB animations
-            let led_idx = led::animation::matrix_co_ordered(row as usize, (col as usize).min(18));
+            // (matrix_co_ordered bounds-checks internally and returns NO_LED for
+            //  positions without an LED — no need to clamp col to 18 here.)
+            let led_idx = led::animation::matrix_co_ordered(row as usize, col as usize);
             self.rgb.register_hit(led_idx, self.rgb.anim_tick);
 
             // Register keypress for typing heatmap frame buffer
@@ -891,6 +901,12 @@ fn main() -> ! {
     let mut periodic_timer = 0u16;
     let mut idle_timer = 0u32;
     let mut rx_idle_ticks: u32 = 0;
+    // Prescaler for USB-mode RF status sync (port of usb_sync_prescaler, rf.c:540-548).
+    // C code sends CMD_RF_STS_SYSC every 10 calls in USB mode so the NRF keeps
+    // reporting rf_battery/rf_charge/rf_led. Without this, the wireless fields
+    // freeze and the Caps/Num indicators driven by rf_led stop working after
+    // switching from wireless to USB.
+    let mut usb_sync_prescaler: u8 = 0;
 
     loop {
         let tick = tick_arrived();
@@ -1195,12 +1211,24 @@ fn main() -> ! {
                 }
 
                 if dev.proto.link_mode != LinkMode::Usb {
+                    // Wireless: poll NRF status every 200ms
                     dev.proto.build_link_cmd(CMD_RF_STS_SYSC);
                     uart_flush!(&dev.proto);
                     dev.proto.sync_lost += 1;
-                    if dev.proto.sync_lost >= 5 {
+                    if dev.proto.sync_lost >= 10 {
+                        // 10 missed syncs (≈2s) → hard reset NRF (matches C rf.c:551)
                         dev.proto.sync_lost = 0;
                         dev.proto.f_rf_reset = true;
+                    }
+                } else {
+                    // USB: keep NRF reporting status every 10×200ms = 2s so the
+                    // shared fields (rf_battery, rf_charge, rf_led) stay fresh.
+                    // rf_led drives the Caps/Num lock side-LED indicators.
+                    usb_sync_prescaler = usb_sync_prescaler.saturating_add(1);
+                    if usb_sync_prescaler >= 10 {
+                        usb_sync_prescaler = 0;
+                        dev.proto.build_link_cmd(CMD_RF_STS_SYSC);
+                        uart_flush!(&dev.proto);
                     }
                 }
 
@@ -1283,7 +1311,7 @@ fn main() -> ! {
 
         // ── Side LED update + animation tick ──────────────────────────
         if tick {
-            dev.side.update(&dev.proto, 1, keyboard_leds, dev.f_bat_hold);
+            dev.side.update(&dev.proto, 1, keyboard_leds, &mut dev.f_bat_hold);
 
             rgb_anim_timer += 1;
             if rgb_anim_timer >= 20 {
