@@ -7,7 +7,7 @@ Restored QMK `sym_eager_pk` debouncing and fixed RGB matrix defaults to match th
 ### Fixed
 
 - **Same-Key Latency** — Reverted `matrix::scan()` from `sym_defer_pk` (10ms stability timer per edge) back to QMK's `sym_eager_pk` (0ms first-event latency, 5ms per-key lockout). With `sym_defer_pk`, a release→press cycle faster than 10ms silently dropped the second press because the stability counter was reset by the re-press before it could expire. `sym_eager_pk` matches `quantum/debounce/sym_eager_pk.c` from the C reference (`keyboards/air96_v2/ansi/keyboard.json` `DEBOUNCE=5`) — the first scan that detects a change emits the event immediately, and a 5ms lockout absorbs bounce. Rapid press→release→press cycles now register each edge as it happens (bounce-filtered only within the 5ms lockout window).
-- **RGB Matrix Defaults** — Freshly flashed RGB now matches the C reference (`quantum/rgb_matrix/rgb_matrix.h:52-82`). Default mode changed from solid_color (0) to `CYCLE_LEFT_RIGHT` (4). Default HSV changed from (255, 255, 223) to (0, 255, 255). Default speed changed from 223 to 127. EEPROM `UserConfig::default()` and the `DEV_RESET` handler also updated to match.
+- **RGB Matrix Defaults** — Freshly flashed RGB now matches the C reference (`quantum/rgb_matrix/rgb_matrix.h:52-82`). Default mode changed from solid_color (0) to `CYCLE_LEFT_RIGHT` (4). Default HSV changed from (255, 255, 223) to (0, 255, 255). Default speed changed from 223 to 127. EEPROM `UserConfig::default()` and the `DEV_RESET` handler also updated to match. EEPROM magic bumped from V2 (0xA6) to V3 (0xA7) to force a config reset on first boot after flash, ensuring old EEPROM values (mode=0, hue=255) don't override the new defaults.
 
 ### Changed
 
