@@ -899,7 +899,7 @@ fn main() -> ! {
     let mut t50: u32 = 0;
     let mut t200: u32 = 0;
     let mut periodic_timer = 0u16;
-    let mut idle_timer = 0u32;
+
     let mut rx_idle_ticks: u32 = 0;
     // Prescaler for USB-mode RF status sync (port of usb_sync_prescaler, rf.c:540-548).
     // C code sends CMD_RF_STS_SYSC every 10 calls in USB mode so the NRF keeps
@@ -965,13 +965,6 @@ fn main() -> ! {
         // ── 1ms Timing-Dependent Logic ──────────────────────────────
         if tick {
             dev.matrix.tick_debounce();
-
-            // Track continuous idle time in milliseconds
-            if dev.current_keys.iter().all(|&k| k == 0) {
-                idle_timer = idle_timer.saturating_add(1);
-            } else {
-                idle_timer = 0;
-            }
 
             // UART RX idle gap detection: call rx_finish after 2ms of no bytes
             if dev.proto.rx_len > 0 {
@@ -1367,12 +1360,11 @@ fn main() -> ! {
             dev.side.show_sleep(dev.sleep_enabled);
         }
 
-        // ── RGB matrix I2C flush (only when idle — never block keystrokes) ──
+        // ── RGB matrix I2C flush (every ~10ms, unconditional — matches C rgb_matrix_task) ──
         if tick {
             rgb_flush_timer += 1;
         }
-        let idle = idle_timer >= 20 && events.is_empty() && dev.current_keys.iter().all(|&k| k == 0);
-        if dev.rgb.needs_flush() && rgb_flush_timer >= 10 && idle {
+        if dev.rgb.needs_flush() && rgb_flush_timer >= 10 {
             rgb_flush_timer = 0;
             pwm_flush!(&mut dev.rgb, i2c);
         }
