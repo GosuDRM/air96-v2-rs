@@ -1486,7 +1486,9 @@ pub fn tick_animation(rgb: &mut RgbMatrix) {
     if rgb.mode == 0 {
         return; // Solid — manual set_hsv controls color
     }
-    rgb.anim_tick = rgb.anim_tick.wrapping_add(1);
+    // Increment by 20ms per tick to match C g_rgb_timer (millisecond counter).
+    // tick_animation() is called every 20ms from main loop.
+    rgb.anim_tick = rgb.anim_tick.wrapping_add(20);
 
     match rgb.mode {
         1 => render_breathing(rgb),
