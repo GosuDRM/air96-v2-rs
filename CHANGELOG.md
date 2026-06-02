@@ -1,5 +1,18 @@
 # Changelog
 
+## v4.1.6 (2026-06-02)
+
+Input-latency pass.
+
+### Fixed
+
+- **Media/system-key latency** — Consumer and System HID endpoints polled at 8ms; lowered to 1ms so all three HID endpoints match C's `USB_POLLING_INTERVAL_MS 1`. (The keyboard endpoint was already 1ms.)
+
+### Notes
+
+- The dominant key-press latency was the SysTick 8× clock bug fixed in v4.1.3 — effective debounce was 40ms, now 5ms (QMK `sym_eager_pk`, 0ms first-event). With that flashed, the USB regular-key path is ~1–2ms end to end (≤1ms scan + 0ms eager debounce + ≤1ms USB poll), matching the C reference. **If keys still feel laggy, make sure v4.1.3+ is actually flashed.**
+- On wireless (BLE / 2.4G) the remaining latency is the nRF's RF connection interval, which lives in the nRF firmware, not this MCU.
+
 ## v4.1.5 (2026-06-02)
 
 Another +50% animation speed, and the Fn-layer hotkeys are now 1:1 with the C reference.

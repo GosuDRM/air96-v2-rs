@@ -120,9 +120,12 @@ pub struct UsbHid<'a> {
 
 impl<'a> UsbHid<'a> {
     pub fn new(bus: &'a UsbBusAllocator<UsbBusType>) -> Self {
+        // All HID endpoints poll at 1ms, matching C's USB_POLLING_INTERVAL_MS=1.
+        // (Keyboard was already 1ms; consumer/system were 8ms = up to 8ms of
+        // media/system-key latency.)
         let keyboard = HIDClass::new(bus, COMBINED_KEYBOARD_DESC, 1);
-        let consumer = HIDClass::new(bus, MediaKeyboardReport::desc(), 8);
-        let system  = HIDClass::new(bus, SystemControlReport16::desc(), 8);
+        let consumer = HIDClass::new(bus, MediaKeyboardReport::desc(), 1);
+        let system  = HIDClass::new(bus, SystemControlReport16::desc(), 1);
         let device = UsbDeviceBuilder::new(bus, UsbVidPid(USB_VID, USB_PID))
             .manufacturer("NuPhy")
             .product("Air96 V2 Keyboard")
