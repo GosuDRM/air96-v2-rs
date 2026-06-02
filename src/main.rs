@@ -639,18 +639,6 @@ fn main() -> ! {
         .sysclk(48.mhz())
         .freeze(&mut dp.FLASH);
 
-    // ── USB disconnect on boot ───────────────────────────────────────
-    // After DFU flash, the STM32 ROM bootloader leaves USB in a state
-    // where the host may not re-enumerate. Force a disconnect by
-    // clearing the DP pull-up, waiting 100ms, then re-enabling it.
-    // This ensures the host sees a clean USB device attach.
-    unsafe {
-        // BCDR.DPPU = bit 15 — DP pull-up enable
-        const USB_BCDR: *mut u32 = (0x4000_5C00 + 0x1C) as *mut u32;
-        USB_BCDR.write_volatile(0); // disconnect
-    }
-    cortex_m::asm::delay(4_800_000); // ~100ms at 48MHz
-
     // ── SysTick: 1ms tick ───────────────────────────────────────────
     // 48MHz / 1000 = 48000 cycles per tick.
     // MUST select the core clock: the cortex-m reset default is the external
@@ -827,6 +815,11 @@ fn main() -> ! {
     };
     let usb_bus = stm32f0xx_hal::usb::UsbBus::new(usb_periph);
     let mut usb_hid = UsbHid::new(&usb_bus);
+
+    // ── USB settle delay ───────────────────────────────────────────
+    // After DFU flash, the host may not re-enumerate immediately.
+    // Give the USB peripheral time to initialize before the main loop.
+    cortex_m::asm::delay(4_800_000); // ~100ms at 48MHz
 
     // ── Device state ─────────────────────────────────────────────────
     let mut dev = Device::new();
