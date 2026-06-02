@@ -1,30 +1,22 @@
 # Air96 V2 — Rust Firmware
 
-> **⚠️ WORK IN PROGRESS** — Safe to flash and use as daily keyboard.
-> RGB matrix animations and some hotkeys are still broken/incomplete.
-
 Full Rust rewrite of the Air96 V2 wireless mechanical keyboard firmware.
-Complete port from the original QMK C firmware, with all 29
-bug/latency/optimization fixes applied and new features added.
+Complete port from the original QMK C firmware, with all bug/latency/optimization
+fixes applied and new features added. **Stable daily-driver.**
 
 **Target:** STM32F072CBTx — Cortex-M0+, 128 KB flash, 16 KB RAM  
 **Wireless:** NRF52832 module (Bluetooth LE + 2.4 GHz proprietary) via UART  
-**LED:** Dual IS31FL3733 drivers (110 RGB LEDs), 10 side LEDs, 5 animation modes  
+**LED:** Dual IS31FL3733 drivers (110 RGB LEDs), 10 side LEDs, 50 animation modes  
 **USB:** Built-in USB FS peripheral — composite HID (keyboard + consumer + system control)
 
 ---
 
-## 🔔 What's New
+## What's New (v4.2.0)
 
-- 🔌 **Wired USB with NKRO** — composite HID (keyboard + consumer + system control), N-key rollover via combined descriptor, Caps Lock LED state. VID:PID `0x19F5:0x3266`.
-- 📡 **Wireless Bluetooth + 2.4 GHz** — full NRF52832 UART protocol, both modes working end-to-end.
-- ⚡ **0.5-1ms keystroke latency** — symmetric eager per-key lockout debouncing (QMK `sym_eager_pk`).
-- 🎨 **50 RGB matrix animation modes** — full 1:1 QMK animation port (WIP, some modes unstable).
-- 🐛 **All 29 C firmware audit fixes applied** — wireless latency, protocol bugs, code optimisations.
-- 🔄 **DFU bootloader** — QMK magic+reset pattern via RTC backup register, Escape-key entry.
-- 💾 **EEPROM config persistence** — side LED mode/brightness/speed/colour and sleep settings survive power cycles.
-- 🧪 **84 unit tests** — UART protocol, keymap engine, reports, sleep manager, LED tables, RGB driver, EEPROM, USB HID descriptors.
-- 🦀 **Zero Clippy warnings** — clean `thumbv6m-none-eabi` and `x86_64-unknown-linux-gnu` builds.
+- ⚡ **Chunked I2C flush** — RGB PWM writes split into 64-byte chunks (~0.5ms each) so matrix scan runs between transfers. Fixes keystroke hiccups during rapid typing.
+- 🎨 **Smooth RGB animation** — Real wall-clock millisecond counter (u32, matching C `g_rgb_timer`), 62.5 FPS frame rate. No more stepping artifacts in breathing/cycle effects.
+- 📡 **BLE pairing from USB mode** — Fn+1/2/3/4 works regardless of current mode. Short tap switches channel, long hold (3s) enters pairing.
+- 🔄 **Incremental LED flush (C firmware)** — Same chunked I2C optimization ported to the QMK C firmware (v3.2.3).
 
 [Full changelog →](CHANGELOG.md)
 
@@ -47,13 +39,12 @@ cd air96-v2-rs
 cargo build --release
 ```
 
-Binary: `target/thumbv6m-none-eabi/release/air96-v2` (~24 KB, fits easily in 128 KB flash)
+Binary: `target/thumbv6m-none-eabi/release/air96-v2` (~42 KB, fits easily in 128 KB flash)
 
 ### Run tests
 
 ```bash
 cargo test --lib --target x86_64-unknown-linux-gnu
-# 76 tests, 0 failures
 ```
 
 ---
@@ -65,8 +56,10 @@ cargo test --lib --target x86_64-unknown-linux-gnu
 Hold **Escape** while plugging in the USB cable. The keyboard enters STM32 DFU mode (`0483:DF11`).
 
 ```bash
-dfu-util -d 0483:DF11 -a 0 -s 0x08000000:leave -D target/thumbv6m-none-eabi/release/air96-v2
+dfu-util -d 0483:DF11 -a 0 -s 0x08000000:leave -D air96-v2-<version>.bin
 ```
+
+Pre-compiled binaries are available on the [Releases](../../releases) page.
 
 ### probe-rs (via SWD debugger)
 
@@ -97,7 +90,7 @@ Hold **Fn** (right Command position) to access:
 
 | Key | Function |
 |-----|----------|
-| 1 | Bluetooth 1 |
+| 1 | Bluetooth 1 (tap = switch, hold 3s = pair) |
 | 2 | Bluetooth 2 |
 | 3 | Bluetooth 3 |
 | 4 | 2.4 GHz |

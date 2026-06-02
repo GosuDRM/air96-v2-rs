@@ -1,5 +1,39 @@
 # Changelog
 
+## v4.2.0 (2026-06-02)
+
+Smooth RGB animation and BLE pairing fixes.
+
+### Changed
+
+- **Smooth RGB animation** — `anim_tick` changed from `u16` (+45 per 20ms) to `u32` real wall-clock milliseconds (matching C `g_rgb_timer`). Frame rate increased from 50 to 62.5 FPS (20ms → 16ms). Eliminates visible stepping in breathing, cycle, and reactive effects.
+- **BLE pairing from USB mode** — Removed `link_mode != Usb` gate on LNK_BLE/LNK_RF keycodes. Fn+1/2/3/4 now works regardless of current mode (short tap = channel switch, hold 3s = pairing).
+- **Long-press threshold** — Moved `rf_sw_press_delay` from 50ms timer block to 1ms tick path. Threshold 60 now = 60ms (tap) vs 3000ms (pairing), matching C firmware's `RF_LONG_PRESS_DELAY=60` at 50ms intervals.
+
+## v4.1.9 (2026-06-02)
+
+Chunked I2C flush to eliminate keystroke hiccups during rapid typing.
+
+### Changed
+
+- **Chunked RGB LED writes** — Each IS31FL3733 192-byte PWM write split into 3×64-byte chunks. Max I2C blocking per loop iteration reduced from ~1.7ms to ~0.5ms. Matrix scan runs between chunks, so fast keypresses that previously landed inside the I2C window are no longer missed.
+
+## v4.1.8 (2026-06-02)
+
+Split I2C flush across two loop iterations.
+
+### Changed
+
+- **Split driver flush** — Instead of writing both IS31FL3733 drivers in one ~3.5ms block, each driver flushes in a separate loop iteration. Max blocking reduced to ~1.7ms.
+
+## v4.1.7 (2026-06-02)
+
+Initial latency investigation — verified firmware delivers events to kernel within ~2ms.
+
+### Notes
+
+- Used `evtest` to confirm kernel timestamps show <2ms from physical keypress to evdev event. The 80ms latency seen on clickspeedtester.com is key hold duration (how long the user physically holds the key), not firmware latency.
+
 ## v4.1.6 (2026-06-02)
 
 Input-latency pass.

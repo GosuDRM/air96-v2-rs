@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: thumbv6m-none-eabi
+
+    - name: Install ARM toolchain
+      run: sudo apt-get update -qq && sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi
+
+    - name: Compile
+      run: cargo build --release
+
+    - name: Create binary
+      run: arm-none-eabi-objcopy -O binary target/thumbv6m-none-eabi/release/air96-v2 air96-v2-rs-${{ github.ref_name }}.bin
+
+    - name: Extract changelog
+      run: |
+        VERSION="${{ github.ref_name }}"
+        awk -v ver="$VERSION" '
+          $0 ~ "^## " ver { found=1; print; next }
+          /^## v/ { found=0 }
+          found { print }
+        ' CHANGELOG.md > /tmp/release_notes.md
+        cat /tmp/release_notes.md
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: Air96 V2 Rust Firmware ${{ github.ref_name }}
+        body_path: /tmp/release_notes.md
+        files: air96-v2-rs-${{ github.ref_name }}.bin
