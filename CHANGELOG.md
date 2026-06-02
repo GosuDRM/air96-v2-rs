@@ -1,5 +1,25 @@
 # Changelog
 
+## v4.3.0 (2026-06-02)
+
+Bug audit — critical animation and sleep fixes, optimizations.
+
+### Fixed
+
+- **Reactive animations break after 20 key presses** — `hit_count` overflowed the 20-entry ring buffer, causing all single-hit reactive effects (modes 33, 34, 35, 37, 39, 41, 43) to stop working. Fixed with ring-buffer-aware iteration.
+- **Digital rain never spawns drops** — `digital_rain_drop == 0` check was unreachable after increment. Changed to `== 1`.
+- **Rapid sleep/wake cycling** — `usb_suspend_debounce` not reset on wakeup, causing immediate re-sleep when USB is suspended with key activity.
+- **DND system key broken in USB mode** — `SystemControlReport16` descriptor expects 1-based values but code sent raw HID usage codes. Fixed by converting `0x9B` → `27` for USB path.
+- **periodic_timer never resets in USB mode** — timer accumulated indefinitely, causing unpredictable first wireless keepalive on mode switch.
+- **Both dirty flags set for single lock change** — Caps Lock only needs `dirty1` (driver 0), Num Lock only needs `dirty2` (driver 1). Eliminated unnecessary I2C writes.
+- **render_cycle_out_in_dual overflow** — i16→i8 cast corrupted distance for right-side LEDs (px > 217). Fixed with i16 math throughout.
+- **Test assertions corrected** — Fixed 4 tests with wrong expected values matching actual keymap layout.
+
+### Changed
+
+- **Matrix settling 500→10 iterations** — Reduced scan settling from ~500µs to ~50µs per scan. QMK uses 2 NOPs; 10 volatile reads provides ample margin.
+- **Release profile: opt-level 2, panic=abort, debug=false** — Better inlining for hot paths, eliminates unwinding code, smaller binaries.
+
 ## v4.2.0 (2026-06-02)
 
 Smooth RGB animation and BLE pairing fixes.

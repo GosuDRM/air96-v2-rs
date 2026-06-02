@@ -220,26 +220,28 @@ use crate::config::eeprom;
 
 // ===== KEYMAP RGB CONTROLS =====
 #[test] fn mac_fn_rgb_controls() {
-    assert_eq!(keymap::LAYER_MAC_FN[2][13], keymap::KC_RGB_MOD);
+    assert_eq!(keymap::LAYER_MAC_FN[2][13], keymap::KC_BAT_SHOW);
     assert_eq!(keymap::LAYER_MAC_FN[4][8], keymap::MO | 4);
-    assert_eq!(keymap::LAYER_MAC_FN[4][9], keymap::KC_RGB_SPI);
+    assert_eq!(keymap::LAYER_MAC_FN[4][9], keymap::KC_RGB_SPD);
+    assert_eq!(keymap::LAYER_MAC_FN[4][10], keymap::KC_RGB_SPI);
     assert_eq!(keymap::LAYER_MAC_FN[4][15], keymap::KC_RGB_VAI);
-    assert_eq!(keymap::LAYER_MAC_FN[5][14], keymap::KC_RGB_SPD); // fn+LEFT
+    assert_eq!(keymap::LAYER_MAC_FN[5][14], keymap::KC_RGB_MOD); // fn+LEFT
     assert_eq!(keymap::LAYER_MAC_FN[5][15], keymap::KC_RGB_VAD); // fn+DOWN
-    assert_eq!(keymap::LAYER_MAC_FN[5][16], keymap::KC_RGB_SPI); // fn+RIGHT
-    assert_eq!(keymap::LAYER_MAC_FN[5][17], keymap::KC_RGB_HUI);
+    assert_eq!(keymap::LAYER_MAC_FN[5][16], keymap::KC_RGB_HUI); // fn+RIGHT
 }
 #[test] fn win_fn_rgb_controls() {
-    assert_eq!(keymap::LAYER_WIN_FN[2][13], keymap::KC_RGB_MOD);
+    assert_eq!(keymap::LAYER_WIN_FN[2][13], keymap::KC_BAT_SHOW);
     assert_eq!(keymap::LAYER_WIN_FN[4][8], keymap::MO | 4);
-    assert_eq!(keymap::LAYER_WIN_FN[5][14], keymap::KC_RGB_SPD); // fn+LEFT
+    assert_eq!(keymap::LAYER_WIN_FN[5][14], keymap::KC_RGB_MOD); // fn+LEFT
     assert_eq!(keymap::LAYER_WIN_FN[5][15], keymap::KC_RGB_VAD); // fn+DOWN
-    assert_eq!(keymap::LAYER_WIN_FN[5][16], keymap::KC_RGB_SPI); // fn+RIGHT
+    assert_eq!(keymap::LAYER_WIN_FN[5][16], keymap::KC_RGB_HUI); // fn+RIGHT
 }
 #[test] fn fn_layer_side_controls() {
     assert_eq!(keymap::LAYER_FN[4][4], keymap::KC_RGB_TEST);
     assert_eq!(keymap::LAYER_FN[4][9], keymap::KC_SIDE_SPD);
-    assert_eq!(keymap::LAYER_FN[5][15], keymap::KC_SIDE_MOD);
+    assert_eq!(keymap::LAYER_FN[5][14], keymap::KC_SIDE_MOD);
+    assert_eq!(keymap::LAYER_FN[5][15], keymap::KC_SIDE_VAD);
+    assert_eq!(keymap::LAYER_FN[5][16], keymap::KC_SIDE_HUI);
 }
 
 // ===== REPORTS =====
@@ -469,7 +471,7 @@ use crate::config::eeprom;
     assert_eq!(c.side_speed, 2); assert!(c.side_rgb); assert!(c.sleep_enable);
     assert_eq!(c.rgb_mode, 4); assert_eq!(c.rgb_hue, 0);
     assert_eq!(c.rgb_sat, 255); assert_eq!(c.rgb_val, 255);
-    assert_eq!(c.rgb_speed, 127); assert!(c.rgb_enabled);
+    assert_eq!(c.rgb_speed, 255); assert!(c.rgb_enabled);
 }
 
 // ===== USB HID REPORT TYPES =====

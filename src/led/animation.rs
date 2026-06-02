@@ -340,14 +340,15 @@ fn runner_sin_cos_i(rgb: &mut RgbMatrix, effect: fn(i8, i8, u8, u8) -> u8) {
 /// Reactive runner: uses hit_tracker to find recent key hits
 fn runner_reactive(rgb: &mut RgbMatrix, effect: fn(u16) -> (u8, u8)) {
     let max_tick = 65535u32 / qadd8(rgb.speed, 1) as u32;
+    let search_count = core::cmp::min(rgb.hit_count as usize, 20);
     for i in 0..LED_COUNT {
         let mut tick = max_tick;
         let current = rgb.anim_tick;
-        // Reverse search for most recent hit at this LED
-        for j in (0..rgb.hit_count).rev() {
-            if j as usize >= rgb.hit_index.len() { break; }
-            if rgb.hit_index[j as usize] == i as u8 {
-                let e = current.wrapping_sub(rgb.hit_tick[j as usize]);
+        // Reverse search for most recent hit at this LED (ring-buffer aware)
+        for k in 0..search_count {
+            let j = ((rgb.hit_count as usize) - 1 - k) % 20;
+            if rgb.hit_index[j] == i as u8 {
+                let e = current.wrapping_sub(rgb.hit_tick[j]);
                 if e < tick { tick = e; }
                 break;
             }
@@ -361,20 +362,21 @@ fn runner_reactive(rgb: &mut RgbMatrix, effect: fn(u16) -> (u8, u8)) {
 
 /// Reactive splash runner: uses spatial distance from hit positions
 fn runner_reactive_splash(rgb: &mut RgbMatrix, start: u8, effect: fn(i16, i16, u8, u16) -> (u8, u8)) {
-    let count = rgb.hit_count;
+    let count = core::cmp::min(rgb.hit_count as usize, 20);
     let current = rgb.anim_tick;
+    let search_start = core::cmp::min(start as usize, count);
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let mut hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
-        for j in start..count {
-            if j as usize >= rgb.hit_index.len() { break; }
-            let hx = rgb.hit_x[j as usize] as i16;
-            let hy = rgb.hit_y[j as usize] as i16;
+        for k in search_start..count {
+            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let hx = rgb.hit_x[j] as i16;
+            let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
-            let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
+            let elapsed = current.wrapping_sub(rgb.hit_tick[j]);
             let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let (h, v) = effect(dx, dy, dist, tick);
             hsv_h = h;
@@ -619,7 +621,7 @@ pub fn render_cycle_out_in_dual(rgb: &mut RgbMatrix) {
     let half_center_x = (CENTER_X as i16) / 2;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
-        let dx = half_center_x - abs8((px as i16 - CENTER_X as i16) as i8) as i16;
+        let dx = half_center_x - (px as i16 - CENTER_X as i16).unsigned_abs() as i16;
         let dy = (py as i16) - (CENTER_Y as i16);
         let dist = sqrt16((dx * dx + dy * dy) as u16);
         let hue = (3u16 * dist as u16).wrapping_add(time as u16);
@@ -674,7 +676,7 @@ pub fn render_digital_rain(rgb: &mut RgbMatrix) {
 
     for col in 0..MATRIX_COLS {
         for row in 0..MATRIX_ROWS {
-            if row == 0 && rgb.digital_rain_drop == 0 {
+            if row == 0 && rgb.digital_rain_drop == 1 {
                 if random8() < (255u16 / DIGITAL_RAIN_DROPS as u16) as u8 {
                     rgb.frame_buffer[row][col] = max_intensity;
                 }
@@ -984,12 +986,13 @@ pub fn render_solid_reactive(rgb: &mut RgbMatrix) {
     let max_tick = 65535u32 / qadd8(rgb.speed, 1) as u32;
     let sat = rgb.sat;
     let current = rgb.anim_tick;
+    let search_count = core::cmp::min(rgb.hit_count as usize, 20);
     for i in 0..LED_COUNT {
         let mut tick = max_tick;
-        for j in (0..rgb.hit_count).rev() {
-            if j as usize >= rgb.hit_index.len() { break; }
-            if rgb.hit_index[j as usize] == i as u8 {
-                let e = current.wrapping_sub(rgb.hit_tick[j as usize]);
+        for k in 0..search_count {
+            let j = ((rgb.hit_count as usize) - 1 - k) % 20;
+            if rgb.hit_index[j] == i as u8 {
+                let e = current.wrapping_sub(rgb.hit_tick[j]);
                 if e < tick { tick = e; }
                 break;
             }
@@ -1007,12 +1010,13 @@ pub fn render_solid_reactive_simple(rgb: &mut RgbMatrix) {
     let max_tick = 65535u32 / qadd8(rgb.speed, 1) as u32;
     let sat = rgb.sat;
     let current = rgb.anim_tick;
+    let search_count = core::cmp::min(rgb.hit_count as usize, 20);
     for i in 0..LED_COUNT {
         let mut tick = max_tick;
-        for j in (0..rgb.hit_count).rev() {
-            if j as usize >= rgb.hit_index.len() { break; }
-            if rgb.hit_index[j as usize] == i as u8 {
-                let e = current.wrapping_sub(rgb.hit_tick[j as usize]);
+        for k in 0..search_count {
+            let j = ((rgb.hit_count as usize) - 1 - k) % 20;
+            if rgb.hit_index[j] == i as u8 {
+                let e = current.wrapping_sub(rgb.hit_tick[j]);
                 if e < tick { tick = e; }
                 break;
             }
@@ -1026,21 +1030,20 @@ pub fn render_solid_reactive_simple(rgb: &mut RgbMatrix) {
 
 // ── Mode 35: SPLASH ─────────────────────────────────────────────────
 pub fn render_splash(rgb: &mut RgbMatrix) {
-    let count = rgb.hit_count;
-    let start = qsub8(count, 1);
+    let count = core::cmp::min(rgb.hit_count as usize, 20);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let mut hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
-        for j in start..count {
-            if j as usize >= rgb.hit_index.len() { break; }
-            let hx = rgb.hit_x[j as usize] as i16;
-            let hy = rgb.hit_y[j as usize] as i16;
+        for k in 0..count {
+            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let hx = rgb.hit_x[j] as i16;
+            let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
-            let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
+            let elapsed = current.wrapping_sub(rgb.hit_tick[j]);
             let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
@@ -1083,20 +1086,19 @@ pub fn render_multisplash(rgb: &mut RgbMatrix) {
 
 // ── Mode 37: SOLID_SPLASH ───────────────────────────────────────────
 pub fn render_solid_splash(rgb: &mut RgbMatrix) {
-    let count = rgb.hit_count;
-    let start = qsub8(count, 1);
+    let count = core::cmp::min(rgb.hit_count as usize, 20);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let mut hsv_v: u8 = 0;
-        for j in start..count {
-            if j as usize >= rgb.hit_index.len() { break; }
-            let hx = rgb.hit_x[j as usize] as i16;
-            let hy = rgb.hit_y[j as usize] as i16;
+        for k in 0..count {
+            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let hx = rgb.hit_x[j] as i16;
+            let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
-            let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
+            let elapsed = current.wrapping_sub(rgb.hit_tick[j]);
             let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
@@ -1110,19 +1112,19 @@ pub fn render_solid_splash(rgb: &mut RgbMatrix) {
 
 // ── Mode 38: SOLID_MULTISPLASH ──────────────────────────────────────
 pub fn render_solid_multisplash(rgb: &mut RgbMatrix) {
-    let count = rgb.hit_count;
+    let count = core::cmp::min(rgb.hit_count as usize, 20);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let mut hsv_v: u8 = 0;
-        for j in 0..count {
-            if j as usize >= rgb.hit_index.len() { break; }
-            let hx = rgb.hit_x[j as usize] as i16;
-            let hy = rgb.hit_y[j as usize] as i16;
+        for k in 0..count {
+            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let hx = rgb.hit_x[j] as i16;
+            let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
-            let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
+            let elapsed = current.wrapping_sub(rgb.hit_tick[j]);
             let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
@@ -1147,21 +1149,20 @@ pub fn fn_solid_reactive_cross_math(dx: i16, dy: i16, dist: u8, tick: u16) -> (u
 }
 
 pub fn render_solid_reactive_cross(rgb: &mut RgbMatrix) {
-    let count = rgb.hit_count;
-    let start = qsub8(count, 1);
+    let count = core::cmp::min(rgb.hit_count as usize, 20);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
-        for j in start..count {
-            if j as usize >= rgb.hit_index.len() { break; }
-            let hx = rgb.hit_x[j as usize] as i16;
-            let hy = rgb.hit_y[j as usize] as i16;
+        for k in 0..count {
+            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let hx = rgb.hit_x[j] as i16;
+            let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
-            let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
+            let elapsed = current.wrapping_sub(rgb.hit_tick[j]);
             let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let (_h, v) = fn_solid_reactive_cross_math(dx, dy, dist, tick);
             hsv_v = qadd8(hsv_v, v);
@@ -1174,20 +1175,20 @@ pub fn render_solid_reactive_cross(rgb: &mut RgbMatrix) {
 
 // ── Mode 40: SOLID_REACTIVE_MULTICROSS ──────────────────────────────
 pub fn render_solid_reactive_multicross(rgb: &mut RgbMatrix) {
-    let count = rgb.hit_count;
+    let count = core::cmp::min(rgb.hit_count as usize, 20);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
-        for j in 0..count {
-            if j as usize >= rgb.hit_index.len() { break; }
-            let hx = rgb.hit_x[j as usize] as i16;
-            let hy = rgb.hit_y[j as usize] as i16;
+        for k in 0..count {
+            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let hx = rgb.hit_x[j] as i16;
+            let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
-            let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
+            let elapsed = current.wrapping_sub(rgb.hit_tick[j]);
             let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let (_h, v) = fn_solid_reactive_cross_math(dx, dy, dist, tick);
             hsv_v = qadd8(hsv_v, v);
@@ -1237,22 +1238,21 @@ pub fn render_solid_reactive_nexus(rgb: &mut RgbMatrix) {
 }
 // Simplified nexus re-do:
 pub fn render_solid_reactive_nexus_v2(rgb: &mut RgbMatrix) {
-    let count = rgb.hit_count;
-    let start = qsub8(count, 1);
+    let count = core::cmp::min(rgb.hit_count as usize, 20);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let mut hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
         let mut any_hit = false;
-        for j in start..count {
-            if j as usize >= rgb.hit_index.len() { break; }
-            let hx = rgb.hit_x[j as usize] as i16;
-            let hy = rgb.hit_y[j as usize] as i16;
+        for k in 0..count {
+            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let hx = rgb.hit_x[j] as i16;
+            let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
-            let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
+            let elapsed = current.wrapping_sub(rgb.hit_tick[j]);
             let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
@@ -1273,21 +1273,21 @@ pub fn render_solid_reactive_nexus_v2(rgb: &mut RgbMatrix) {
 
 // ── Mode 42: SOLID_REACTIVE_MULTINEXUS ──────────────────────────────
 pub fn render_solid_reactive_multinexus(rgb: &mut RgbMatrix) {
-    let count = rgb.hit_count;
+    let count = core::cmp::min(rgb.hit_count as usize, 20);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let mut hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
         let mut any_hit = false;
-        for j in 0..count {
-            if j as usize >= rgb.hit_index.len() { break; }
-            let hx = rgb.hit_x[j as usize] as i16;
-            let hy = rgb.hit_y[j as usize] as i16;
+        for k in 0..count {
+            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let hx = rgb.hit_x[j] as i16;
+            let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
-            let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
+            let elapsed = current.wrapping_sub(rgb.hit_tick[j]);
             let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
@@ -1308,21 +1308,20 @@ pub fn render_solid_reactive_multinexus(rgb: &mut RgbMatrix) {
 
 // ── Mode 43: SOLID_REACTIVE_WIDE ────────────────────────────────────
 pub fn render_solid_reactive_wide(rgb: &mut RgbMatrix) {
-    let count = rgb.hit_count;
-    let start = qsub8(count, 1);
+    let count = core::cmp::min(rgb.hit_count as usize, 20);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
-        for j in start..count {
-            if j as usize >= rgb.hit_index.len() { break; }
-            let hx = rgb.hit_x[j as usize] as i16;
-            let hy = rgb.hit_y[j as usize] as i16;
+        for k in 0..count {
+            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let hx = rgb.hit_x[j] as i16;
+            let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
-            let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
+            let elapsed = current.wrapping_sub(rgb.hit_tick[j]);
             let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_add(dist as u16 * 5);
             if effect > 255 { effect = 255; }
@@ -1336,20 +1335,20 @@ pub fn render_solid_reactive_wide(rgb: &mut RgbMatrix) {
 
 // ── Mode 44: SOLID_REACTIVE_MULTIWIDE ───────────────────────────────
 pub fn render_solid_reactive_multiwide(rgb: &mut RgbMatrix) {
-    let count = rgb.hit_count;
+    let count = core::cmp::min(rgb.hit_count as usize, 20);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
-        for j in 0..count {
-            if j as usize >= rgb.hit_index.len() { break; }
-            let hx = rgb.hit_x[j as usize] as i16;
-            let hy = rgb.hit_y[j as usize] as i16;
+        for k in 0..count {
+            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let hx = rgb.hit_x[j] as i16;
+            let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
-            let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
+            let elapsed = current.wrapping_sub(rgb.hit_tick[j]);
             let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_add(dist as u16 * 5);
             if effect > 255 { effect = 255; }

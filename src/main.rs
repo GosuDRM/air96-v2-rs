@@ -371,7 +371,8 @@ impl Device {
                     flush(&mut self.proto);
                     self.pending_system_usb = 0x009B;
                     if self.proto.link_mode == LinkMode::Usb {
-                        usb_hid.send_system(0x009B);
+                        // Descriptor expects 1-based index: 0x9B - 0x81 + 1 = 27
+                        usb_hid.send_system(0x9B - 0x81 + 1);
                     }
                 } else {
                     report::send_system(&mut self.proto, 0);
@@ -1345,13 +1346,11 @@ fn main() -> ! {
             let num_on  = (keyboard_leds & 0x01) != 0 || (dev.proto.rf_led & 0x01) != 0;
             if dev.rgb.caps_lock != caps_on {
                 dev.rgb.caps_lock = caps_on;
-                dev.rgb.dirty1 = true;
-                dev.rgb.dirty2 = true;
+                dev.rgb.dirty1 = true; // LED 55 is on driver 0
             }
             if dev.rgb.num_lock != num_on {
                 dev.rgb.num_lock = num_on;
-                dev.rgb.dirty1 = true;
-                dev.rgb.dirty2 = true;
+                dev.rgb.dirty2 = true; // LED 33 is on driver 1
             }
         }
 
@@ -1472,9 +1471,9 @@ fn main() -> ! {
         // ── Periodic sender (every 200ms) ────────────────────────────
         if tick {
             periodic_timer += 1;
-            if periodic_timer >= 200 && dev.proto.link_mode != LinkMode::Usb {
+            if periodic_timer >= 200 {
                 periodic_timer = 0;
-                if dev.sleep.no_act_time <= 2000 {
+                if dev.proto.link_mode != LinkMode::Usb && dev.sleep.no_act_time <= 2000 {
                     let report = dev.proto.bytekb_report_buf;
                     dev.proto.build_report(wireless::uart::CMD_RPT_BYTE_KB, &report, 8);
                     uart_flush!(&dev.proto);

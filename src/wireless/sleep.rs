@@ -80,6 +80,7 @@ impl SleepManager {
         let usb_wake = proto.link_mode == LinkMode::Usb && !usb_suspended;
         if self.f_wakeup_prepare && (self.no_act_time < 10 || usb_wake) {
             self.f_wakeup_prepare = false;
+            self.usb_suspend_debounce = 0; // Reset to prevent immediate re-sleep
             // Power-up GPIO handled by main.rs
             proto.build_link_cmd(CMD_HAND);
             // USB wakeup handled by main.rs if link_mode == USB

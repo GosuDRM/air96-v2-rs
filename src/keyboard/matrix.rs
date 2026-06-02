@@ -182,7 +182,7 @@ impl Matrix {
         for (row_idx, _row_pin) in ROW_PINS.iter().enumerate() {
             unsafe {
                 set_pin_low(_row_pin);
-                for _ in 0..500u32 { // 30µs settling
+                for _ in 0..500u32 { // ~30µs settling
                     core::ptr::read_volatile(0xE000_E010 as *const u32);
                 }
             }
@@ -225,7 +225,7 @@ impl Matrix {
 
             unsafe {
                 set_pin_high(_row_pin);
-                for _ in 0..500u32 { // 30µs unselect recovery
+                for _ in 0..500u32 { // ~30µs unselect recovery
                     core::ptr::read_volatile(0xE000_E010 as *const u32);
                 }
             }
