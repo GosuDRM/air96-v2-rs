@@ -242,40 +242,4 @@ pub fn write_byte(offset: usize, value: u8) {
 pub fn reset_to_defaults() {
     // Write default config first
     save(&UserConfig::default());
-
-    // Write default keymap layers
-    use crate::keyboard::keymap;
-    use crate::via::{DYNAMIC_KEYMAP_LAYER_COUNT, VIA_MATRIX_ROWS, VIA_MATRIX_COLS};
-
-    let layers: [&[[u16; VIA_MATRIX_COLS]; VIA_MATRIX_ROWS]; 5] = [
-        &keymap::LAYER_MAC,
-        &keymap::LAYER_MAC_FN,
-        &keymap::LAYER_WIN,
-        &keymap::LAYER_WIN_FN,
-        &keymap::LAYER_FN,
-    ];
-
-    for (layer_idx, layer) in layers.iter().enumerate() {
-        for row in 0..VIA_MATRIX_ROWS {
-            for col in 0..VIA_MATRIX_COLS {
-                let kc = layer[row][col];
-                let addr = 64 + layer_idx * VIA_MATRIX_ROWS * VIA_MATRIX_COLS * 2
-                    + row * VIA_MATRIX_COLS * 2 + col * 2;
-                write_byte(addr, (kc >> 8) as u8);
-                write_byte(addr + 1, (kc & 0xFF) as u8);
-            }
-        }
-    }
-
-    // Fill remaining layers with KC_NO (0x0000)
-    for layer_idx in 5..DYNAMIC_KEYMAP_LAYER_COUNT {
-        for row in 0..VIA_MATRIX_ROWS {
-            for col in 0..VIA_MATRIX_COLS {
-                let addr = 64 + layer_idx * VIA_MATRIX_ROWS * VIA_MATRIX_COLS * 2
-                    + row * VIA_MATRIX_COLS * 2 + col * 2;
-                write_byte(addr, 0);
-                write_byte(addr + 1, 0);
-            }
-        }
-    }
 }

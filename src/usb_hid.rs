@@ -105,14 +105,11 @@ pub const COMBINED_KEYBOARD_DESC: &[u8] = &[
     0xC0,             // END_COLLECTION
 ];
 
-use crate::via;
-
 pub struct UsbHid<'a> {
     device: UsbDevice<'a, UsbBusType>,
     keyboard: HIDClass<'a, UsbBusType>,
     consumer: HIDClass<'a, UsbBusType>,
     system: HIDClass<'a, UsbBusType>,
-    raw_hid: HIDClass<'a, UsbBusType>,
     /// Host-controlled keyboard LED state (bits: 0=NumLock, 1=CapsLock, 2=ScrollLock, 3=Compose, 4=Kana)
     led_state: u8,
     /// Tracks suspend state for edge detection
@@ -126,7 +123,6 @@ impl<'a> UsbHid<'a> {
         let keyboard = HIDClass::new(bus, COMBINED_KEYBOARD_DESC, 1);
         let consumer = HIDClass::new(bus, MediaKeyboardReport::desc(), 1);
         let system  = HIDClass::new(bus, SystemControlReport16::desc(), 1);
-        let raw_hid = HIDClass::new(bus, via::RAW_HID_DESC, 1);
         let device = UsbDeviceBuilder::new(bus, UsbVidPid(USB_VID, USB_PID))
             .manufacturer("NuPhy")
             .product("Air96 V2 Keyboard")
@@ -141,7 +137,6 @@ impl<'a> UsbHid<'a> {
             keyboard,
             consumer,
             system,
-            raw_hid,
             led_state: 0,
             suspended: false,
             pending_keyboard_report: None,
@@ -150,17 +145,11 @@ impl<'a> UsbHid<'a> {
     }
 
     /// Poll the USB device and HID classes. Returns true if data was exchanged.
-    /// Also detects suspend/resume transitions, processes host LED reports,
-    /// and handles VIA raw HID commands.
+    /// Also detects suspend/resume transitions and processes host LED reports.
     pub fn poll(&mut self) -> bool {
         let _was_suspended = self.suspended;
 
-        let result = self.device.poll(&mut [
-            &mut self.keyboard,
-            &mut self.consumer,
-            &mut self.system,
-            &mut self.raw_hid,
-        ]);
+        let result = self.device.poll(&mut [&mut self.keyboard, &mut self.consumer, &mut self.system]);
 
         // Suspend / resume detection
         let state = self.device.state();
@@ -177,16 +166,6 @@ impl<'a> UsbHid<'a> {
         if let Ok(len) = self.keyboard.pull_raw_output(&mut led_buf) {
             if len >= 2 && led_buf[0] == 1 {
                 self.led_state = led_buf[1];
-            }
-        }
-
-        // Handle VIA raw HID commands
-        let mut via_buf = [0u8; 32];
-        if let Ok(len) = self.raw_hid.pull_raw_output(&mut via_buf) {
-            if len >= 1 {
-                if via::via_command(&mut via_buf) {
-                    let _ = self.raw_hid.push_raw_input(&via_buf);
-                }
             }
         }
 

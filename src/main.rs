@@ -7,7 +7,6 @@ mod keyboard;
 mod wireless;
 mod led;
 mod usb_hid;
-mod via;
 
 use cortex_m::peripheral::Peripherals as CorePeripherals;
 use cortex_m_rt::{entry, exception};
