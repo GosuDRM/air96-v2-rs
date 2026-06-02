@@ -113,16 +113,17 @@ Same as Mac Fn, plus media keys accessible on the top row (brightness + media co
 
 ### Layer 4 — Function (Side LED + RGB controls)
 
-Accessed via **Fn+Fn** (double Fn):
+Hold **Fn + Shift** (or Fn + M) to access (same as C firmware `MO(4)`):
 
 | Key | Function |
 |-----|----------|
-| Fn+Z | Side LED speed down |
-| Fn+X | Side LED speed up |
-| Fn+↑ | Side LED brightness up |
-| Fn+← | Side LED mode cycle |
-| Fn+↓ | Side LED brightness down |
-| Fn+→ | Side LED hue cycle |
+| B | RGB test (7-colour cycle) |
+| , | Side LED speed down |
+| . | Side LED speed up |
+| ↑ | Side LED brightness up |
+| ← | Side LED mode cycle |
+| ↓ | Side LED brightness down |
+| → | Side LED hue cycle |
 
 ---
 
