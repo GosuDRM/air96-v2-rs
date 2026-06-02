@@ -5,6 +5,7 @@ pub mod keyboard;
 pub mod wireless;
 pub mod led;
 pub mod usb_hid;
+pub mod via;
 
 #[cfg(test)]
 mod test;

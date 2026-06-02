@@ -24,6 +24,7 @@ use stm32f0xx_hal::pac;
 
 /// Config page address: last 2KB page (page 63 of 64, 128K flash)
 const CONFIG_PAGE_ADDR: u32 = 0x0801_F800;
+const CONFIG_PAGE_SIZE: usize = 2048;
 const MAGIC_VALID_V1: u8 = 0xA5;
 const MAGIC_VALID_V4: u8 = 0xA8;
 
@@ -175,4 +176,106 @@ pub fn save(cfg: &UserConfig) {
             flash.cr.modify(|_, w| w.lock().set_bit());
         }
     });
+}
+
+/// Read a byte from the config page at the given offset.
+pub fn read_byte(offset: usize) -> u8 {
+    if offset >= CONFIG_PAGE_SIZE { return 0xFF; }
+    unsafe {
+        core::ptr::read_volatile((CONFIG_PAGE_ADDR + offset as u32) as *const u8)
+    }
+}
+
+/// Write a byte to the config page at the given offset.
+/// Performs a read/modify/erase/write cycle on the entire page.
+/// WARNING: Must not be interrupted — disables interrupts during write.
+pub fn write_byte(offset: usize, value: u8) {
+    if offset >= CONFIG_PAGE_SIZE { return; }
+
+    cortex_m::interrupt::free(|_| {
+        unsafe {
+            // 1. Read entire page into RAM
+            let mut buf = [0u8; CONFIG_PAGE_SIZE];
+            for i in 0..CONFIG_PAGE_SIZE {
+                buf[i] = core::ptr::read_volatile(
+                    (CONFIG_PAGE_ADDR + i as u32) as *const u8
+                );
+            }
+
+            // 2. Modify the target byte
+            buf[offset] = value;
+
+            let flash = &*pac::FLASH::ptr();
+
+            // 3. Unlock flash
+            flash.keyr.write(|w| w.bits(0x4567_0123));
+            flash.keyr.write(|w| w.bits(0xCDEF_89AB));
+
+            // 4. Wait until not busy
+            while flash.sr.read().bsy().bit() {}
+
+            // 5. Page erase
+            flash.cr.modify(|_, w| w.per().set_bit());
+            flash.ar.write(|w| w.bits(CONFIG_PAGE_ADDR));
+            flash.cr.modify(|_, w| w.strt().set_bit());
+            while flash.sr.read().bsy().bit() {}
+            flash.cr.modify(|_, w| w.per().clear_bit());
+
+            // 6. Program page (halfword writes)
+            flash.cr.modify(|_, w| w.pg().set_bit());
+            let ptr = CONFIG_PAGE_ADDR as *mut u16;
+            for i in 0..CONFIG_PAGE_SIZE / 2 {
+                let hw = (buf[i * 2] as u16) | ((buf[i * 2 + 1] as u16) << 8);
+                core::ptr::write_volatile(ptr.add(i), hw);
+                while flash.sr.read().bsy().bit() {}
+            }
+            flash.cr.modify(|_, w| w.pg().clear_bit());
+
+            // 7. Lock flash
+            flash.cr.modify(|_, w| w.lock().set_bit());
+        }
+    });
+}
+
+/// Reset the dynamic keymap and user config to defaults.
+/// Writes the default keymap to EEPROM and resets the config.
+pub fn reset_to_defaults() {
+    // Write default config first
+    save(&UserConfig::default());
+
+    // Write default keymap layers
+    use crate::keyboard::keymap;
+    use crate::via::{DYNAMIC_KEYMAP_LAYER_COUNT, VIA_MATRIX_ROWS, VIA_MATRIX_COLS};
+
+    let layers: [&[[u16; VIA_MATRIX_COLS]; VIA_MATRIX_ROWS]; 5] = [
+        &keymap::LAYER_MAC,
+        &keymap::LAYER_MAC_FN,
+        &keymap::LAYER_WIN,
+        &keymap::LAYER_WIN_FN,
+        &keymap::LAYER_FN,
+    ];
+
+    for (layer_idx, layer) in layers.iter().enumerate() {
+        for row in 0..VIA_MATRIX_ROWS {
+            for col in 0..VIA_MATRIX_COLS {
+                let kc = layer[row][col];
+                let addr = 64 + layer_idx * VIA_MATRIX_ROWS * VIA_MATRIX_COLS * 2
+                    + row * VIA_MATRIX_COLS * 2 + col * 2;
+                write_byte(addr, (kc >> 8) as u8);
+                write_byte(addr + 1, (kc & 0xFF) as u8);
+            }
+        }
+    }
+
+    // Fill remaining layers with KC_NO (0x0000)
+    for layer_idx in 5..DYNAMIC_KEYMAP_LAYER_COUNT {
+        for row in 0..VIA_MATRIX_ROWS {
+            for col in 0..VIA_MATRIX_COLS {
+                let addr = 64 + layer_idx * VIA_MATRIX_ROWS * VIA_MATRIX_COLS * 2
+                    + row * VIA_MATRIX_COLS * 2 + col * 2;
+                write_byte(addr, 0);
+                write_byte(addr + 1, 0);
+            }
+        }
+    }
 }
