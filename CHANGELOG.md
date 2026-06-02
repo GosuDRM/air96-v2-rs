@@ -1,5 +1,15 @@
 # Changelog
 
+## v4.1.4 (2026-06-02)
+
+RGB animation now defaults to maximum speed, plus a global +50% speed boost.
+
+### Changed
+
+- **Default RGB speed → max** — `rgb_speed` default raised from 127 to 255 (max) in `UserConfig::default()`, `RgbMatrix::new()`, and the `DEV_RESET` handler.
+- **Global +50% animation speed** — `tick_animation()` advances `anim_tick` by 30 instead of 20 per 20ms tick (×1.5). Every effect's `time` is linear in `anim_tick`, so all 50 modes and reactive decay speed up uniformly — on top of the max speed setting.
+- **EEPROM magic V3 → V4 (0xA7 → 0xA8)** — DFU flashing doesn't erase the config page (flash page 63, past the firmware), so a persisted V3 config would keep the old speed=127. Bumping the magic invalidates the saved config on first boot so the new max-speed default actually applies.
+
 ## v4.1.3 (2026-06-02)
 
 Fixed the SysTick clock source — the actual root cause of the "static" RGB animation and stretched debounce/sleep timings.

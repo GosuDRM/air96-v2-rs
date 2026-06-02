@@ -235,7 +235,7 @@ impl RgbMatrix {
             hue: 0,    // RGB_MATRIX_DEFAULT_HUE
             sat: 255,  // RGB_MATRIX_DEFAULT_SAT
             val: 255,  // RGB_MATRIX_DEFAULT_VAL (= RGB_MATRIX_MAXIMUM_BRIGHTNESS)
-            speed: 127, // RGB_MATRIX_DEFAULT_SPD (= UINT8_MAX / 2)
+            speed: 255, // max speed (default)
             enabled: true,
             suspended: false,
             hit_count: 0,

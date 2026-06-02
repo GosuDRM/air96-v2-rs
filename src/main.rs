@@ -1143,7 +1143,7 @@ fn main() -> ! {
                         dev.rgb.enabled = true;
                         dev.rgb.hue = 0; dev.rgb.sat = 255;
                         dev.rgb.val = 255;   // RGB_MATRIX_DEFAULT_VAL
-                        dev.rgb.speed = 127; // RGB_MATRIX_DEFAULT_SPD
+                        dev.rgb.speed = 255; // max speed (default)
                         dev.rgb.mode = 4;    // CYCLE_LEFT_RIGHT
                         dev.rgb.set_hsv(0, 255, 255);
                         dev.f_bat_hold = false;

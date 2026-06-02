@@ -5,7 +5,7 @@
 //! write endurance (~10k cycles per page).
 //!
 //! Config layout (16 bytes at offset 0):
-//!   [0] = magic flag (0xA6 = valid v2 with main RGB settings, 0xA5 = v1)
+//!   [0] = magic flag (0xA8 = valid v4: RGB defaults, max speed; 0xA5 = v1)
 //!   [1] = side_mode
 //!   [2] = side_brightness
 //!   [3] = side_speed
@@ -25,7 +25,7 @@ use stm32f0xx_hal::pac;
 /// Config page address: last 2KB page (page 63 of 64, 128K flash)
 const CONFIG_PAGE_ADDR: u32 = 0x0801_F800;
 const MAGIC_VALID_V1: u8 = 0xA5;
-const MAGIC_VALID_V3: u8 = 0xA7;
+const MAGIC_VALID_V4: u8 = 0xA8;
 
 /// User config stored in flash
 #[derive(Debug, Clone, Copy)]
@@ -58,7 +58,7 @@ impl Default for UserConfig {
             rgb_hue: 0,     // RGB_MATRIX_DEFAULT_HUE
             rgb_sat: 255,   // RGB_MATRIX_DEFAULT_SAT
             rgb_val: 255,   // RGB_MATRIX_DEFAULT_VAL
-            rgb_speed: 127, // RGB_MATRIX_DEFAULT_SPD
+            rgb_speed: 255, // max speed (default)
             rgb_enabled: true,
         }
     }
@@ -70,7 +70,7 @@ pub fn load() -> Option<UserConfig> {
     let addr = CONFIG_PAGE_ADDR as *const u8;
     unsafe {
         let magic = core::ptr::read_volatile(addr);
-        if magic == MAGIC_VALID_V3 {
+        if magic == MAGIC_VALID_V4 {
             let ptr = addr.add(1);
             Some(UserConfig {
                 side_mode:       core::ptr::read_volatile(ptr),
@@ -131,7 +131,7 @@ pub fn save(cfg: &UserConfig) {
             let ptr = CONFIG_PAGE_ADDR as *mut u16;
             
             // Halfword 0: magic (low) | side_mode (high)
-            let hw0 = MAGIC_VALID_V3 as u16 | ((cfg.side_mode as u16) << 8);
+            let hw0 = MAGIC_VALID_V4 as u16 | ((cfg.side_mode as u16) << 8);
             core::ptr::write_volatile(ptr, hw0);
             while flash.sr.read().bsy().bit() {}
 
