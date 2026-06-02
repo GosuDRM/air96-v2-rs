@@ -2,7 +2,7 @@
 
 ## v4.3.0 (2026-06-02)
 
-Bug audit — critical animation and sleep fixes, optimizations.
+Bug audit — critical animation and sleep fixes.
 
 ### Fixed
 
@@ -17,8 +17,7 @@ Bug audit — critical animation and sleep fixes, optimizations.
 
 ### Changed
 
-- **Matrix settling 500→10 iterations** — Reduced scan settling from ~500µs to ~50µs per scan. QMK uses 2 NOPs; 10 volatile reads provides ample margin.
-- **Release profile: opt-level 2, panic=abort, debug=false** — Better inlining for hot paths, eliminates unwinding code, smaller binaries.
+- **Release profile: debug=false, panic=abort** — Smaller binaries, faster link times. Kept opt-level="s" for binary size (128KB flash limit).
 
 ## v4.2.0 (2026-06-02)
 
