@@ -11,8 +11,9 @@ fixes applied and new features added. **Stable daily-driver.**
 
 ---
 
-## What's New (v4.2.0)
+## What's New (v4.3.0)
 
+- 🐛 **Bug audit fixes** — Reactive animations break after 20 keypresses (ring buffer overflow), digital rain never spawns drops, rapid sleep/wake cycling, DND system key broken in USB mode, and 4 more medium-priority fixes.
 - ⚡ **Chunked I2C flush** — RGB PWM writes split into 64-byte chunks (~0.5ms each) so matrix scan runs between transfers. Fixes keystroke hiccups during rapid typing.
 - 🎨 **Smooth RGB animation** — Real wall-clock millisecond counter (u32, matching C `g_rgb_timer`), 62.5 FPS frame rate. No more stepping artifacts in breathing/cycle effects.
 - 📡 **BLE pairing from USB mode** — Fn+1/2/3/4 works regardless of current mode. Short tap switches channel, long hold (3s) enters pairing.
