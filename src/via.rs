@@ -19,6 +19,8 @@ pub const RAW_HID_DESC: &[u8] = &[
     0xC0,             // END_COLLECTION
 ];
 
+use crate::led::rgb::RgbMatrix;
+
 /// VIA protocol version (QMK protocol 12 = 0x000C)
 const VIA_PROTOCOL_VERSION: u16 = 0x000C;
 
@@ -70,8 +72,12 @@ pub const DYNAMIC_KEYMAP_MACRO_COUNT: usize = 0;
 pub const DYNAMIC_KEYMAP_MACRO_BUFFER_SIZE: usize = 0;
 
 /// Handle a VIA command. The 32-byte buffer is modified in-place.
+/// `rgb` is the live RGB matrix state; channel 3 reads/writes it directly so
+/// the VIA UI shows what the firmware is actually running.
+/// `save_pending` is set on `ID_CUSTOM_SAVE` so the main loop can flush the
+/// updated `rgb.*` into flash on the next idle tick (deferred, non-blocking).
 /// Returns true if a response should be sent.
-pub fn via_command(data: &mut [u8; 32]) -> bool {
+pub fn via_command(data: &mut [u8; 32], rgb: &mut RgbMatrix, save_pending: &mut bool) -> bool {
     let cmd = data[0];
     match cmd {
         ID_GET_PROTOCOL_VERSION => {
@@ -128,13 +134,17 @@ pub fn via_command(data: &mut [u8; 32]) -> bool {
             true // unreachable
         }
         ID_CUSTOM_GET_VALUE => {
-            via_custom_get_value(data)
+            via_custom_get_value(data, rgb)
         }
         ID_CUSTOM_SET_VALUE => {
-            via_custom_set_value(data)
+            via_custom_set_value(data, rgb)
         }
         ID_CUSTOM_SAVE => {
-            via_custom_save(data)
+            // Acknowledge and flag the main loop to flush the (now-mirrored
+            // rgb.* fields) into flash on the next idle tick. Same path as
+            // firmware-side config changes.
+            *save_pending = true;
+            true
         }
         _ => {
             data[0] = 0xFF; // unhandled
@@ -164,7 +174,15 @@ fn via_get_keyboard_value(data: &mut [u8; 32]) -> bool {
             data[0] = cmd;
             data[1] = value_id;
             // Version as uint32: major*65536 + minor*256 + patch
-            let ver: u32 = 4 * 65536 + 3 * 256 + 0;
+            // Build-time derived from Cargo.toml — keeps VIA in sync with releases.
+            let ver: u32 = {
+                let v = env!("CARGO_PKG_VERSION");
+                let mut parts = v.split('.');
+                let major: u32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+                let minor: u32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+                let patch: u32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+                (major << 16) | (minor << 8) | patch
+            };
             data[2] = ((ver >> 24) & 0xFF) as u8;
             data[3] = ((ver >> 16) & 0xFF) as u8;
             data[4] = ((ver >> 8) & 0xFF) as u8;
@@ -200,15 +218,33 @@ fn via_set_keyboard_value(data: &mut [u8; 32]) -> bool {
 }
 
 /// EEPROM layout for dynamic keymap:
-/// Base address is after the existing UserConfig (16 bytes).
-/// Keymap: DYNAMIC_KEYMAP_LAYER_COUNT * ROWS * COLS * 2 bytes
-const DYNAMIC_KEYMAP_EEPROM_ADDR: usize = 64; // after UserConfig
+/// Base address is immediately after the saved UserConfig (magic + 12 fields
+/// = 13 bytes, rounded up to 16 for halfword alignment in `config::eeprom::save`).
+/// Keymap size: DYNAMIC_KEYMAP_LAYER_COUNT * ROWS * COLS * 2 = 8*6*21*2 = 2016 B,
+/// leaving 2048 - 16 - 2016 = 16 B headroom in the 2KB config page.
+const DYNAMIC_KEYMAP_EEPROM_ADDR: usize = 16; // right after UserConfig (16 B)
 
 fn eeprom_addr_for_key(layer: usize, row: usize, col: usize) -> usize {
     DYNAMIC_KEYMAP_EEPROM_ADDR
         + layer * VIA_MATRIX_ROWS * VIA_MATRIX_COLS * 2
         + row * VIA_MATRIX_COLS * 2
         + col * 2
+}
+
+/// Write a block of bytes to the dynamic keymap area. Performs a single page
+/// erase + full page write via `eeprom::save_keymap`, so a full 2KB buffer
+/// flush costs ~100ms (50ms page erase + 50ms halfword writes). This is what
+/// the QMK reference does on flash-backed EEPROM — there's no way to avoid
+/// the page erase for a single byte change on STM32F0 without a second page.
+fn write_keymap_block(offset: usize, bytes: &[u8]) {
+    // Read current 2KB, modify the target range, write back.
+    // `save_keymap` already does this; it expects a full 2016-byte buffer.
+    let mut buf = [0xFFu8; 2016];
+    for i in 0..2016 {
+        buf[i] = crate::config::eeprom::read_byte(DYNAMIC_KEYMAP_EEPROM_ADDR + i);
+    }
+    buf[offset..offset + bytes.len()].copy_from_slice(bytes);
+    crate::config::eeprom::save_keymap(&buf);
 }
 
 fn via_dynamic_keymap_get_keycode(data: &mut [u8; 32]) -> bool {
@@ -238,9 +274,9 @@ fn via_dynamic_keymap_set_keycode(data: &mut [u8; 32]) -> bool {
         data[0] = 0xFF;
         return true;
     }
-    let addr = eeprom_addr_for_key(layer, row, col);
-    crate::config::eeprom::write_byte(addr, kc_hi);
-    crate::config::eeprom::write_byte(addr + 1, kc_lo);
+    let off = eeprom_addr_for_key(layer, row, col) - DYNAMIC_KEYMAP_EEPROM_ADDR;
+    let bytes = [kc_hi, kc_lo];
+    write_keymap_block(off, &bytes);
     true
 }
 
@@ -268,14 +304,13 @@ fn via_dynamic_keymap_set_buffer(data: &mut [u8; 32]) -> bool {
         data[0] = 0xFF;
         return true;
     }
-    for i in 0..size {
-        crate::config::eeprom::write_byte(DYNAMIC_KEYMAP_EEPROM_ADDR + offset + i, data[4 + i]);
-    }
+    write_keymap_block(offset, &data[4..4 + size]);
     true
 }
 
 fn via_dynamic_keymap_reset() {
-    // Write the default keymap layers to EEPROM
+    // Write the default keymap layers to EEPROM in a single page write.
+    let mut buf = [0xFFu8; 2016];
     let layers: [&[[u16; VIA_MATRIX_COLS]; VIA_MATRIX_ROWS]; 5] = [
         &crate::keyboard::keymap::LAYER_MAC,
         &crate::keyboard::keymap::LAYER_MAC_FN,
@@ -287,22 +322,14 @@ fn via_dynamic_keymap_reset() {
         for row in 0..VIA_MATRIX_ROWS {
             for col in 0..VIA_MATRIX_COLS {
                 let kc = layer[row][col];
-                let addr = eeprom_addr_for_key(layer_idx, row, col);
-                crate::config::eeprom::write_byte(addr, (kc >> 8) as u8);
-                crate::config::eeprom::write_byte(addr + 1, (kc & 0xFF) as u8);
+                let off = eeprom_addr_for_key(layer_idx, row, col) - DYNAMIC_KEYMAP_EEPROM_ADDR;
+                buf[off] = (kc >> 8) as u8;
+                buf[off + 1] = (kc & 0xFF) as u8;
             }
         }
     }
-    // Fill remaining layers with KC_NO (0x0000)
-    for layer_idx in 5..DYNAMIC_KEYMAP_LAYER_COUNT {
-        for row in 0..VIA_MATRIX_ROWS {
-            for col in 0..VIA_MATRIX_COLS {
-                let addr = eeprom_addr_for_key(layer_idx, row, col);
-                crate::config::eeprom::write_byte(addr, 0);
-                crate::config::eeprom::write_byte(addr + 1, 0);
-            }
-        }
-    }
+    // Layers 5..8 already 0x0000 (KC_NO) from the [0xFF; 2016] init.
+    crate::config::eeprom::save_keymap(&buf);
 }
 
 /// Resolve a keycode from the dynamic keymap (EEPROM) for the given layer/row/col.
@@ -322,28 +349,26 @@ pub fn dynamic_keymap_get_keycode(layer: usize, row: usize, col: usize) -> u16 {
     kc
 }
 
-fn via_custom_get_value(data: &mut [u8; 32]) -> bool {
+fn via_custom_get_value(data: &mut [u8; 32], rgb: &RgbMatrix) -> bool {
     let channel = data[1];
     let value_id = data[2];
     if channel == CHANNEL_RGB_MATRIX {
-        // Return current RGB state — caller should pass these in
-        // For now, return defaults (VIA will read from EEPROM on next connect)
         match value_id {
             RGB_MATRIX_BRIGHTNESS => {
-                data[3] = 255; // default val
+                data[3] = rgb.val;
                 true
             }
             RGB_MATRIX_EFFECT => {
-                data[3] = 4; // CYCLE_LEFT_RIGHT
+                data[3] = rgb.mode;
                 true
             }
             RGB_MATRIX_EFFECT_SPEED => {
-                data[3] = 255; // max speed
+                data[3] = rgb.speed;
                 true
             }
             RGB_MATRIX_COLOR => {
-                data[3] = 0;   // hue
-                data[4] = 255; // sat
+                data[3] = rgb.hue;
+                data[4] = rgb.sat;
                 true
             }
             _ => { data[0] = 0xFF; true }
@@ -354,23 +379,31 @@ fn via_custom_get_value(data: &mut [u8; 32]) -> bool {
     }
 }
 
-fn via_custom_set_value(data: &mut [u8; 32]) -> bool {
+fn via_custom_set_value(data: &mut [u8; 32], rgb: &mut RgbMatrix) -> bool {
     let channel = data[1];
-    let _value_id = data[2];
+    let value_id = data[2];
     if channel == CHANNEL_RGB_MATRIX {
-        // Accept the value — actual application would need Device access
-        // VIA will send a save command after all values are set
-        true
-    } else {
-        data[0] = 0xFF;
-        true
-    }
-}
-
-fn via_custom_save(data: &mut [u8; 32]) -> bool {
-    let channel = data[1];
-    if channel == CHANNEL_RGB_MATRIX {
-        // Save RGB config — actual save would need Device access
+        match value_id {
+            RGB_MATRIX_BRIGHTNESS => {
+                rgb.val = data[3];
+            }
+            RGB_MATRIX_EFFECT => {
+                rgb.mode = data[3];
+            }
+            RGB_MATRIX_EFFECT_SPEED => {
+                rgb.speed = data[3];
+            }
+            RGB_MATRIX_COLOR => {
+                rgb.hue = data[3];
+                rgb.sat = data[4];
+            }
+            _ => { data[0] = 0xFF; return true; }
+        }
+        // The animation step in the main loop reads these fields every frame,
+        // so the change takes effect within one animation tick (~16 ms).
+        // No need to set dirty flags here. The next ID_CUSTOM_SAVE will
+        // signal `save_pending` and the deferred save block (which reads
+        // dev.rgb.*) will persist them.
         true
     } else {
         data[0] = 0xFF;

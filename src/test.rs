@@ -530,17 +530,32 @@ fn system_report_usage_values() {
 #[test]
 fn combined_keyboard_descriptor_and_reports() {
     let desc = crate::usb_hid::COMBINED_KEYBOARD_DESC;
-    assert_eq!(desc.len(), 107);
-    
+    // 107 (boot kbd + NKRO) + 36 (RAW HID collection with Report ID 3) = 143
+    assert_eq!(desc.len(), 143);
+
     // Verify Report ID 1 (boot keyboard) is declared in the descriptor
     // 0x85, 0x01 => Report ID 1
     assert_eq!(desc[6], 0x85);
     assert_eq!(desc[7], 0x01);
-    
+
     // Verify Report ID 2 (NKRO bitmap) is declared in the descriptor
     // 0x85, 0x02 => Report ID 2
     assert_eq!(desc[72], 0x85);
     assert_eq!(desc[73], 0x02);
+
+    // Verify Report ID 3 (RAW HID for VIA) is declared in the descriptor
+    // 0x85, 0x03 => Report ID 3, sits inside the 3rd top-level collection
+    // (vendor page 0xFF60, vendor usage 0x61)
+    let raw_hid_start = 107;
+    assert_eq!(desc[raw_hid_start + 0], 0x06); // USAGE_PAGE
+    assert_eq!(desc[raw_hid_start + 1], 0x60);
+    assert_eq!(desc[raw_hid_start + 2], 0xFF);
+    assert_eq!(desc[raw_hid_start + 3], 0x09); // USAGE
+    assert_eq!(desc[raw_hid_start + 4], 0x61);
+    assert_eq!(desc[raw_hid_start + 5], 0xA1); // COLLECTION
+    assert_eq!(desc[raw_hid_start + 6], 0x01);
+    assert_eq!(desc[raw_hid_start + 7], 0x85); // REPORT_ID
+    assert_eq!(desc[raw_hid_start + 8], 0x03);
     
     // Verify standard keyboard report serialization format
     let modifiers = 0x05; // Ctrl + Alt

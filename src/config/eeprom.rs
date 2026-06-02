@@ -179,6 +179,7 @@ pub fn save(cfg: &UserConfig) {
 }
 
 /// Read a byte from the config page at the given offset.
+#[cfg(all(target_arch = "arm", not(test)))]
 pub fn read_byte(offset: usize) -> u8 {
     if offset >= CONFIG_PAGE_SIZE { return 0xFF; }
     unsafe {
@@ -186,9 +187,17 @@ pub fn read_byte(offset: usize) -> u8 {
     }
 }
 
+/// Host/test stub: returns 0xFF (uninitialized) since flash is not mapped on x86.
+/// Callers like `via::dynamic_keymap_get_keycode` treat 0xFFFF as "use static keymap".
+#[cfg(not(all(target_arch = "arm", not(test))))]
+pub fn read_byte(_offset: usize) -> u8 {
+    0xFF
+}
+
 /// Write a byte to the config page at the given offset.
 /// Performs a read/modify/erase/write cycle on the entire page.
 /// WARNING: Must not be interrupted — disables interrupts during write.
+#[cfg(all(target_arch = "arm", not(test)))]
 pub fn write_byte(offset: usize, value: u8) {
     if offset >= CONFIG_PAGE_SIZE { return; }
 
@@ -235,6 +244,70 @@ pub fn write_byte(offset: usize, value: u8) {
             flash.cr.modify(|_, w| w.lock().set_bit());
         }
     });
+}
+
+/// Host/test stub: no-op (flash is not mapped on x86).
+#[cfg(not(all(target_arch = "arm", not(test))))]
+pub fn write_byte(_offset: usize, _value: u8) {
+    // No-op on host; via.rs will succeed in dispatch but the writes are dropped.
+    // The keymap falls back to the static keymap (via 0xFFFF read) so behavior
+    // is identical to a never-written EEPROM, which is the expected host state.
+}
+
+/// Size of the dynamic keymap area in the config page.
+pub const DYNAMIC_KEYMAP_SIZE: usize = 2016;
+
+/// Bulk write of the dynamic keymap area (bytes [16..16+2016] of the config page).
+/// Preserves the first 16 bytes (UserConfig). On flash this is one page erase
+/// + 2 KB write — ~50ms total, vs. ~1s+ if done byte-by-byte with `write_byte`.
+/// Used by VIA's `ID_CUSTOM_SAVE` and `ID_DYNAMIC_KEYMAP_RESET`.
+#[cfg(all(target_arch = "arm", not(test)))]
+pub fn save_keymap(keymap: &[u8; DYNAMIC_KEYMAP_SIZE]) {
+    use stm32f0xx_hal::pac;
+    cortex_m::interrupt::free(|_| {
+        unsafe {
+            // Read the current page so we can preserve the UserConfig (first 16 B).
+            let mut buf = [0xFFu8; 2048];
+            for i in 0..2048 {
+                buf[i] = core::ptr::read_volatile(
+                    (CONFIG_PAGE_ADDR + i as u32) as *const u8
+                );
+            }
+            // Overwrite the dynamic keymap area.
+            buf[16..16 + DYNAMIC_KEYMAP_SIZE].copy_from_slice(keymap);
+
+            let flash = &*pac::FLASH::ptr();
+
+            // Unlock flash
+            flash.keyr.write(|w| w.bits(0x4567_0123));
+            flash.keyr.write(|w| w.bits(0xCDEF_89AB));
+            while flash.sr.read().bsy().bit() {}
+
+            // Page erase
+            flash.cr.modify(|_, w| w.per().set_bit());
+            flash.ar.write(|w| w.bits(CONFIG_PAGE_ADDR));
+            flash.cr.modify(|_, w| w.strt().set_bit());
+            while flash.sr.read().bsy().bit() {}
+            flash.cr.modify(|_, w| w.per().clear_bit());
+
+            // Program page (halfword writes)
+            flash.cr.modify(|_, w| w.pg().set_bit());
+            let ptr = CONFIG_PAGE_ADDR as *mut u16;
+            for i in 0..2048 / 2 {
+                let hw = (buf[i * 2] as u16) | ((buf[i * 2 + 1] as u16) << 8);
+                core::ptr::write_volatile(ptr.add(i), hw);
+                while flash.sr.read().bsy().bit() {}
+            }
+            flash.cr.modify(|_, w| w.pg().clear_bit());
+            flash.cr.modify(|_, w| w.lock().set_bit());
+        }
+    });
+}
+
+/// Host/test stub for `save_keymap` — no-op.
+#[cfg(not(all(target_arch = "arm", not(test))))]
+pub fn save_keymap(_keymap: &[u8; DYNAMIC_KEYMAP_SIZE]) {
+    // No-op on host; the in-RAM keymap in via.rs remains the source of truth.
 }
 
 /// Reset the dynamic keymap and user config to defaults.

@@ -245,7 +245,11 @@ pub fn get_keycode(layer: usize, row: usize, col: usize) -> u16 {
 
 pub fn resolve_keycode(active_layers: &[usize], row: usize, col: usize) -> u16 {
     for &layer in active_layers.iter().rev() {
-        let kc = get_keycode(layer, row, col);
+        // VIA dynamic keymap (EEPROM) takes precedence over the compiled keymap.
+        // `dynamic_keymap_get_keycode` returns 0xFFFF/0 when EEPROM is uninitialized
+        // and falls back to the static keymap in that case, so this is safe on
+        // first boot and after `ID_EEPROM_RESET`.
+        let kc = crate::via::dynamic_keymap_get_keycode(layer, row, col);
         if kc != KC_NO { return kc; }
     }
     KC_NO

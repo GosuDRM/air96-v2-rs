@@ -1,5 +1,26 @@
 # Changelog
 
+## v4.6.0 (2026-06-03)
+
+VIA support — wired remapping of the dynamic keymap and live RGB matrix control.
+
+### Added
+
+- **VIA configuration** — `via::via_command` handles VIA protocol v12 (0x000C) over the existing boot-kbd HIDClass on a new third collection sharing its OUT endpoint (Report ID 3, vendor usage page 0xFF60, 32-byte IN/OUT). `UsbHid::poll` demuxes OUT reports by Report ID and dispatches Report ID 3 to `via_command`. The descriptor adds 36 bytes to `COMBINED_KEYBOARD_DESC` (107 → 143) and widens the LED/RAW buffer to 33 bytes (Report ID + 32).
+- **Dynamic keymap (EEPROM)** — `ID_DYNAMIC_KEYMAP_GET_KEYCODE`, `ID_DYNAMIC_KEYMAP_SET_KEYCODE`, `ID_DYNAMIC_KEYMAP_GET_BUFFER`, `ID_DYNAMIC_KEYMAP_SET_BUFFER`, `ID_DYNAMIC_KEYMAP_GET_LAYER_COUNT`, `ID_DYNAMIC_KEYMAP_RESET` are wired to the 2 KB config page at offset 16 (right after the 16-byte `UserConfig` block). `keymap::resolve_keycode` consults `via::dynamic_keymap_get_keycode` first; uninitialized slots (0xFFFF) fall back to the compiled keymap. Block writes use a new `eeprom::save_keymap` that does one page erase + 2 KB write per change (~100 ms), replacing the old per-byte `eeprom::write_byte` for the keymap area.
+- **Live RGB matrix control (channel 3)** — `id_qmk_rgb_matrix_brightness/effect/effect_speed/color` read and write `RgbMatrix.{val, mode, speed, hue, sat}` in place, so the firmware's animation step picks up the change on the next tick. `ID_CUSTOM_SAVE` flips the existing `save_pending` flag; the main loop's deferred-save block then flushes the (already-mirrored) `dev.rgb.*` to flash.
+- **`ID_EEPROM_RESET`**, **`ID_BOOTLOADER_JUMP`**, **`ID_GET_PROTOCOL_VERSION`**, **`ID_GET_KEYBOARD_VALUE`** (uptime, layout options, firmware version, switch matrix state) — all return the correct response. Firmware version is now derived from `env!("CARGO_PKG_VERSION")` so it stays in sync with `Cargo.toml` across releases.
+- **Host-test stubs** — `eeprom::{read_byte, write_byte, save_keymap}` and the new `via::via_command` are split into `#[cfg(target_arch = "arm")]` and `#[cfg(not(...))]` arms so the 92 host tests don't crash on flash addresses that don't exist on x86.
+
+### Files
+
+- `src/via.rs` — new, 416 lines (was orphaned since v3.7.0 revert, now wired)
+- `src/usb_hid.rs` — descriptor append + dispatch in `poll()`
+- `src/config/eeprom.rs` — `cfg` guards for host + new `save_keymap`
+- `src/keyboard/keymap.rs` — `resolve_keycode` consults the dynamic keymap first
+- `src/main.rs` — passes `&mut dev.rgb, &mut dev.save_pending` to `usb_hid.poll`
+- `Cargo.toml` / `CHANGELOG.md` — bumped to 4.6.0
+
 ## v4.5.0 (2026-06-02)
 
 Immediate USB suspend LED-off — matches C reference's `suspend_power_down_kb` hook.

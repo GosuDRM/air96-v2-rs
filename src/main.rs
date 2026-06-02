@@ -7,6 +7,7 @@ mod keyboard;
 mod wireless;
 mod led;
 mod usb_hid;
+mod via;
 
 use cortex_m::peripheral::Peripherals as CorePeripherals;
 use cortex_m_rt::{entry, exception};
@@ -966,7 +967,7 @@ fn main() -> ! {
         }
 
         // Always poll USB HID to flush reports/process tokens as fast as possible
-        let _usb_configured = usb_hid.poll();
+        let _usb_configured = usb_hid.poll(&mut dev.rgb, &mut dev.save_pending);
 
         // USB suspend/resume edge — mirror QMK's suspend_power_down_kb / wakeup_init
         // hooks so LEDs go dark the same cycle the host signals suspend, not 1s later.
@@ -983,7 +984,7 @@ fn main() -> ! {
         // One-shot NumLock at boot so numpad works on Linux without manual toggle
         if !dev.boot_numlock_done && usb_hid.configured() {
             usb_hid.send_keyboard(0, &[0x53, 0, 0, 0, 0, 0]); // NumLock press
-            usb_hid.poll(); // flush it
+            usb_hid.poll(&mut dev.rgb, &mut dev.save_pending); // flush it
             usb_hid.send_keyboard(0, &[0; 6]); // release
             dev.boot_numlock_done = true;
         }
