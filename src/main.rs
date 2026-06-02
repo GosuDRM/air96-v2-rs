@@ -107,6 +107,11 @@ struct Device {
     dial_sys_last: bool,
     /// One-shot: send NumLock at boot so numpad works on Linux login
     boot_numlock_done: bool,
+    /// I2C flush state machine (chunked: 64 bytes per iteration)
+    /// 0=idle, 1=unlock+page d1, 2-4=write d1 chunks, 5=unlock+page d2, 6-8=write d2 chunks
+    i2c_flush_phase: u8,
+    pwm_buf1: [u8; 192],
+    pwm_buf2: [u8; 192],
 }
 
 impl Device {
@@ -141,6 +146,9 @@ impl Device {
             dial_dev_last: false,
             dial_sys_last: false,
             boot_numlock_done: false,
+            i2c_flush_phase: 0,
+            pwm_buf1: [0u8; 192],
+            pwm_buf2: [0u8; 192],
         }
     }
 
@@ -1361,13 +1369,73 @@ fn main() -> ! {
             dev.side.show_sleep(dev.sleep_enabled);
         }
 
-        // ── RGB matrix I2C flush (every ~10ms, unconditional — matches C rgb_matrix_task) ──
+        // ── RGB matrix I2C flush (chunked: 64 bytes per iteration to minimize scan blocking) ──
         if tick {
             rgb_flush_timer += 1;
         }
-        if dev.rgb.needs_flush() && rgb_flush_timer >= 10 {
+        if dev.i2c_flush_phase == 0 && dev.rgb.needs_flush() && rgb_flush_timer >= 10 {
+            let (b1, b2) = dev.rgb.build_pwm_buffers();
+            dev.pwm_buf1 = b1;
+            dev.pwm_buf2 = b2;
             rgb_flush_timer = 0;
-            pwm_flush!(&mut dev.rgb, i2c);
+            dev.i2c_flush_phase = 1;
+        }
+        match dev.i2c_flush_phase {
+            1 => {
+                let _ = i2c.write(0x50, &[0xFE, 0xC5]);
+                let _ = i2c.write(0x50, &[0xFD, 0x01]);
+                dev.i2c_flush_phase = if dev.rgb.dirty1 { 2 } else { 5 };
+            }
+            2 => {
+                let mut tx = [0u8; 65];
+                tx[0] = 0x00;
+                tx[1..].copy_from_slice(&dev.pwm_buf1[0..64]);
+                let _ = i2c.write(0x50, &tx);
+                dev.i2c_flush_phase = 3;
+            }
+            3 => {
+                let mut tx = [0u8; 65];
+                tx[0] = 0x40;
+                tx[1..].copy_from_slice(&dev.pwm_buf1[64..128]);
+                let _ = i2c.write(0x50, &tx);
+                dev.i2c_flush_phase = 4;
+            }
+            4 => {
+                let mut tx = [0u8; 65];
+                tx[0] = 0x80;
+                tx[1..].copy_from_slice(&dev.pwm_buf1[128..192]);
+                let _ = i2c.write(0x50, &tx);
+                dev.rgb.dirty1 = false;
+                dev.i2c_flush_phase = 5;
+            }
+            5 => {
+                let _ = i2c.write(0x53, &[0xFE, 0xC5]);
+                let _ = i2c.write(0x53, &[0xFD, 0x01]);
+                dev.i2c_flush_phase = if dev.rgb.dirty2 { 6 } else { 0 };
+            }
+            6 => {
+                let mut tx = [0u8; 65];
+                tx[0] = 0x00;
+                tx[1..].copy_from_slice(&dev.pwm_buf2[0..64]);
+                let _ = i2c.write(0x53, &tx);
+                dev.i2c_flush_phase = 7;
+            }
+            7 => {
+                let mut tx = [0u8; 65];
+                tx[0] = 0x40;
+                tx[1..].copy_from_slice(&dev.pwm_buf2[64..128]);
+                let _ = i2c.write(0x53, &tx);
+                dev.i2c_flush_phase = 8;
+            }
+            8 => {
+                let mut tx = [0u8; 65];
+                tx[0] = 0x80;
+                tx[1..].copy_from_slice(&dev.pwm_buf2[128..192]);
+                let _ = i2c.write(0x53, &tx);
+                dev.rgb.dirty2 = false;
+                dev.i2c_flush_phase = 0;
+            }
+            _ => {}
         }
 
         // ── Deferred EEPROM save (only when idle, no events) ──────────
