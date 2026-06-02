@@ -38,9 +38,12 @@ rustup target add thumbv6m-none-eabi
 ```bash
 cd air96-v2-rs
 cargo build --release
+arm-none-eabi-objcopy -O binary target/thumbv6m-none-eabi/release/air96-v2 air96-v2-<version>.bin
 ```
 
-Binary: `target/thumbv6m-none-eabi/release/air96-v2` (~42 KB, fits easily in 128 KB flash)
+The ELF (`target/thumbv6m-none-eabi/release/air96-v2`) is for `probe-rs`; the
+flat binary (`air96-v2-<version>.bin`, ~45 KB) is for DFU. 128 KB flash has
+plenty of headroom.
 
 ### Run tests
 
@@ -65,7 +68,7 @@ Pre-compiled binaries are available on the [Releases](../../releases) page.
 ### probe-rs (via SWD debugger)
 
 ```bash
-probe-rs download --chip STM32F072CBTx target/thumbv6m-none-eabi/release/air96-v2
+probe-rs download --chip STM32F072CBTx --format elf target/thumbv6m-none-eabi/release/air96-v2
 ```
 
 ---
