@@ -201,7 +201,7 @@ impl Device {
                     self.break_all_keys();
                 } else if self.rf_sw_press {
                     self.rf_sw_press = false;
-                    if self.rf_sw_press_delay < 60 {
+                    if self.rf_sw_press_delay < 3000 {
                         self.proto.link_mode = ch;
                         self.proto.rf_channel = ch as u8;
                         self.proto.ble_channel = ch as u8;
@@ -1172,9 +1172,11 @@ fn main() -> ! {
             }
 
             // ── Long press handler (every tick = 1ms) ──────────────────
+            // C firmware: RF_LONG_PRESS_DELAY=60 at 50ms intervals = 3000ms
+            // Short tap (<3s): channel switch. Long hold (≥3s): BLE pairing (NEW_ADV).
             if dev.rf_sw_press {
                 dev.rf_sw_press_delay += 1;
-                if dev.rf_sw_press_delay >= 60 {
+                if dev.rf_sw_press_delay >= 3000 {
                     dev.rf_sw_press = false;
                     let ch = dev.rf_sw_temp;
                     dev.proto.link_mode = LinkMode::from_u8(ch);
