@@ -11,13 +11,12 @@ fixes applied and new features added. **Stable daily-driver.**
 
 ---
 
-## What's New (v4.3.0)
+## What's New (v4.6.0)
 
-- 🐛 **Bug audit fixes** — Reactive animations break after 20 keypresses (ring buffer overflow), digital rain never spawns drops, rapid sleep/wake cycling, DND system key broken in USB mode, and 4 more medium-priority fixes.
-- ⚡ **Chunked I2C flush** — RGB PWM writes split into 64-byte chunks (~0.5ms each) so matrix scan runs between transfers. Fixes keystroke hiccups during rapid typing.
-- 🎨 **Smooth RGB animation** — Real wall-clock millisecond counter (u32, matching C `g_rgb_timer`), 62.5 FPS frame rate. No more stepping artifacts in breathing/cycle effects.
-- 📡 **BLE pairing from USB mode** — Fn+1/2/3/4 works regardless of current mode. Short tap switches channel, long hold (3s) enters pairing.
-- 🔄 **Incremental LED flush (C firmware)** — Same chunked I2C optimization ported to the QMK C firmware (v3.2.3).
+- 🎛️ **VIA support** — Remap the dynamic keymap and control the RGB matrix live from the VIA app. RAW HID collection embedded as Report ID 3 inside the existing boot-kbd HIDClass (no 4th interface, no EP-memory overflow). Protocol v12, channel 3 reads/writes `RgbMatrix.{val,mode,speed,hue,sat}` in place. `via/Air96 V2 via3.json` carries the 24 custom keycodes.
+- 💡 **Immediate USB suspend LED-off** — RGB matrix is zeroed the same cycle the host signals suspend (mirrors C `suspend_power_down_kb`), not after the 1s sleep-handler debounce. No more ~1s of frozen animation on PC shutdown.
+
+Previous: v4.3.0 — bug audit fixes, chunked I2C flush, smooth RGB animation, BLE pairing from USB mode.
 
 [Full changelog →](CHANGELOG.md)
 
