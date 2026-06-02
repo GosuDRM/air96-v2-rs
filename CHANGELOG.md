@@ -1,5 +1,13 @@
 # Changelog
 
+## v4.1.3 (2026-06-02)
+
+Fixed the SysTick clock source — the actual root cause of the "static" RGB animation and stretched debounce/sleep timings.
+
+### Fixed
+
+- **SysTick running 8x too slow (static RGB animation)** — `main()` configured SysTick with `set_reload(47999)` for a 1ms tick but never called `set_clock_source(SystClkSource::Core)`. The cortex-m reset default is the *external reference* clock, which on STM32F0 is HCLK/8 (6MHz), so every "1ms" tick was actually **8ms**. The RGB animation gate (`rgb_anim_timer >= 20`) therefore fired every 160ms instead of 20ms, so a `CYCLE_LEFT_RIGHT` sweep took ~16s (and ~5.5min on the prior `anim_tick += 1` build) — visually frozen. Added `cp.SYST.set_clock_source(SystClkSource::Core)` so the tick is a true 1ms, matching the C reference's `g_rgb_timer`/`sync_timer` and `stm32f0xx-hal`'s own `Delay`. This also un-stretches every other ms-based timing (the "5ms" debounce lockout was really 40ms — the same-key latency chased in v4.1.2; "3s" DFU hold was 24s; init/sleep/RF-sync delays were all 8x long).
+
 ## v4.1.2 (2026-06-02)
 
 Restored QMK `sym_eager_pk` debouncing and fixed RGB matrix defaults to match the C reference firmware.

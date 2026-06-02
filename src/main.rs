@@ -636,7 +636,13 @@ fn main() -> ! {
         .freeze(&mut dp.FLASH);
 
     // ── SysTick: 1ms tick ───────────────────────────────────────────
-    // 48MHz / 1000 = 48000 cycles per tick
+    // 48MHz / 1000 = 48000 cycles per tick.
+    // MUST select the core clock: the cortex-m reset default is the external
+    // reference clock, which on STM32F0 is HCLK/8 (6MHz). Without this, every
+    // "1ms" tick is actually 8ms — making RGB animations ~8x too slow (static)
+    // and stretching all debounce/sleep timings 8x. (stm32f0xx-hal's own Delay
+    // sets Core for the same reason.)
+    cp.SYST.set_clock_source(cortex_m::peripheral::syst::SystClkSource::Core);
     cp.SYST.set_reload(47999);
     cp.SYST.clear_current();
     cp.SYST.enable_counter();
