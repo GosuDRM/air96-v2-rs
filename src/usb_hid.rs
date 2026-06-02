@@ -129,7 +129,7 @@ impl<'a> UsbHid<'a> {
         let device = UsbDeviceBuilder::new(bus, UsbVidPid(USB_VID, USB_PID))
             .manufacturer("NuPhy")
             .product("Air96 V2 Keyboard")
-            .serial_number("v4.1.9")
+            .serial_number("v4.2.0")
             .device_class(0x00)
             .device_sub_class(0x00)
             .device_protocol(0x00)

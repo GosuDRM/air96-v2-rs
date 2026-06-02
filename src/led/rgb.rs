@@ -169,8 +169,8 @@ pub struct RgbMatrix {
     pub dirty2: bool,
     /// Current mode
     pub mode: u8,
-    /// Animation tick counter
-    pub anim_tick: u16,
+    /// Animation tick counter (real wall-clock milliseconds, matching C g_rgb_timer)
+    pub anim_tick: u32,
     /// Current hue (0-255)
     pub hue: u8,
     /// Current saturation (0-255)
@@ -189,7 +189,7 @@ pub struct RgbMatrix {
     pub hit_index: [u8; 20],
     pub hit_x: [u8; 20],
     pub hit_y: [u8; 20],
-    pub hit_tick: [u16; 20],
+    pub hit_tick: [u32; 20],
 
     // ── Framebuffer for matrix effects (digital_rain, typing_heatmap) ─
     pub frame_buffer: [[u8; 19]; 6],
@@ -298,7 +298,7 @@ impl RgbMatrix {
     /// Register a key hit for reactive animations.
     /// led_index: the LED index where the key is, or 0xFF if none.
     /// anim_tick_at_press: the animation tick at which the press occurred.
-    pub fn register_hit(&mut self, led_index: u8, anim_tick_at_press: u16) {
+    pub fn register_hit(&mut self, led_index: u8, anim_tick_at_press: u32) {
         if led_index == 0xFF { return; }
         let led = led_index as usize;
         if led < LED_COUNT {

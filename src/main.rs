@@ -1315,8 +1315,11 @@ fn main() -> ! {
         if tick {
             dev.side.update(&dev.proto, 1, keyboard_leds, &mut dev.f_bat_hold);
 
+            // Advance animation clock by 1ms (matches C g_rgb_timer)
+            dev.rgb.anim_tick = dev.rgb.anim_tick.wrapping_add(1);
+
             rgb_anim_timer += 1;
-            if rgb_anim_timer >= 20 {
+            if rgb_anim_timer >= 16 {
                 rgb_anim_timer = 0;
                 dev.rgb.tick_animation();
             }

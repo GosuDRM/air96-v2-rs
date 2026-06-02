@@ -269,13 +269,13 @@ pub fn map_row_column_to_led(row: u8, col: u8, out: &mut [u8; 8]) -> u8 {
 
 // ── Common time helpers ──────────────────────────────────────────────
 
-fn compute_time(anim_tick: u16, speed: u8, divisor: u8) -> u8 {
-    let scaled = scale16by8(anim_tick, qadd8(speed.wrapping_div(divisor), 1));
+fn compute_time(anim_tick: u32, speed: u8, divisor: u8) -> u8 {
+    let scaled = scale16by8(anim_tick as u16, qadd8(speed.wrapping_div(divisor), 1));
     scaled as u8
 }
 
-fn compute_time_speed_div(anim_tick: u16, speed: u8) -> u8 {
-    scale16by8(anim_tick, speed.wrapping_div(2)) as u8
+fn compute_time_speed_div(anim_tick: u32, speed: u8) -> u8 {
+    scale16by8(anim_tick as u16, speed.wrapping_div(2)) as u8
 }
 
 // ── Runners (inlined into each animation for simplicity) ─────────────
@@ -339,7 +339,7 @@ fn runner_sin_cos_i(rgb: &mut RgbMatrix, effect: fn(i8, i8, u8, u8) -> u8) {
 
 /// Reactive runner: uses hit_tracker to find recent key hits
 fn runner_reactive(rgb: &mut RgbMatrix, effect: fn(u16) -> (u8, u8)) {
-    let max_tick = 65535u16 / qadd8(rgb.speed, 1) as u16;
+    let max_tick = 65535u32 / qadd8(rgb.speed, 1) as u32;
     for i in 0..LED_COUNT {
         let mut tick = max_tick;
         let current = rgb.anim_tick;
@@ -352,7 +352,7 @@ fn runner_reactive(rgb: &mut RgbMatrix, effect: fn(u16) -> (u8, u8)) {
                 break;
             }
         }
-        let offset = scale16by8(tick, qadd8(rgb.speed, 1));
+        let offset = scale16by8(tick as u16, qadd8(rgb.speed, 1));
         let (h, v) = effect(offset);
         let (r, g, b) = hsv_to_rgb(h, rgb.sat, v);
         rgb.set_color(i, r, g, b);
@@ -375,7 +375,7 @@ fn runner_reactive_splash(rgb: &mut RgbMatrix, start: u8, effect: fn(i16, i16, u
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
             let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
-            let tick = scale16by8(elapsed, qadd8(rgb.speed, 1));
+            let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let (h, v) = effect(dx, dy, dist, tick);
             hsv_h = h;
             hsv_v = qadd8(hsv_v, v);
@@ -811,7 +811,7 @@ pub fn render_hue_wave(rgb: &mut RgbMatrix) {
 
 // ── Mode 25: JELLYBEAN_RAINDROPS ────────────────────────────────────
 pub fn render_jellybean_raindrops(rgb: &mut RgbMatrix) {
-    let scaled = scale16by8(rgb.anim_tick, qadd8(rgb.speed, 16));
+    let scaled = scale16by8(rgb.anim_tick as u16, qadd8(rgb.speed, 16));
     if scaled.is_multiple_of(5) {
         let idx = random8_max(LED_COUNT as u8) as usize;
         let h = random8();
@@ -824,7 +824,7 @@ pub fn render_jellybean_raindrops(rgb: &mut RgbMatrix) {
 // ── Mode 26: PIXEL_FLOW ─────────────────────────────────────────────
 pub fn render_pixel_flow(rgb: &mut RgbMatrix) {
     let interval = 3000u32 / scale16by8(qadd8(rgb.speed, 16) as u16, 16) as u32;
-    if (rgb.anim_tick as u32) < rgb.pixel_flow_wait_timer {
+    if rgb.anim_tick < rgb.pixel_flow_wait_timer {
         return;
     }
 
@@ -849,7 +849,7 @@ pub fn render_pixel_flow(rgb: &mut RgbMatrix) {
         rgb.set_color(i, r, g, b);
     }
 
-    rgb.pixel_flow_wait_timer = (rgb.anim_tick as u32).wrapping_add(interval);
+    rgb.pixel_flow_wait_timer = rgb.anim_tick.wrapping_add(interval);
 }
 
 // ── Mode 27: PIXEL_FRACTAL ──────────────────────────────────────────
@@ -857,7 +857,7 @@ const MID_COL: usize = MATRIX_COLS / 2;
 
 pub fn render_pixel_fractal(rgb: &mut RgbMatrix) {
     let interval = 3000u32 / scale16by8(qadd8(rgb.speed, 16) as u16, 16) as u32;
-    if (rgb.anim_tick as u32) <= rgb.pixel_fractal_timer {
+    if rgb.anim_tick <= rgb.pixel_fractal_timer {
         return;
     }
 
@@ -896,13 +896,13 @@ pub fn render_pixel_fractal(rgb: &mut RgbMatrix) {
         rgb.pixel_fractal_state[h][mid_c] = (random8() & 3) == 0;
     }
 
-    rgb.pixel_fractal_timer = (rgb.anim_tick as u32).wrapping_add(interval);
+    rgb.pixel_fractal_timer = rgb.anim_tick.wrapping_add(interval);
 }
 
 // ── Mode 28: PIXEL_RAIN ─────────────────────────────────────────────
 pub fn render_pixel_rain(rgb: &mut RgbMatrix) {
     let interval = 500u32 / scale16by8(qadd8(rgb.speed, 16) as u16, 16) as u32;
-    if (rgb.anim_tick as u32) <= rgb.pixel_rain_timer {
+    if rgb.anim_tick <= rgb.pixel_rain_timer {
         return;
     }
     let idx = random8_max(LED_COUNT as u8) as usize;
@@ -914,7 +914,7 @@ pub fn render_pixel_rain(rgb: &mut RgbMatrix) {
         let (r, g, b) = hsv_to_rgb(h, s, rgb.val);
         rgb.set_color(idx, r, g, b);
     }
-    rgb.pixel_rain_timer = (rgb.anim_tick as u32).wrapping_add(interval);
+    rgb.pixel_rain_timer = rgb.anim_tick.wrapping_add(interval);
 }
 
 // ── Mode 29: RAINBOW_BEACON ─────────────────────────────────────────
@@ -955,7 +955,7 @@ pub fn render_rainbow_pinwheels(rgb: &mut RgbMatrix) {
 
 // ── Mode 31: RAINDROPS ──────────────────────────────────────────────
 pub fn render_raindrops(rgb: &mut RgbMatrix) {
-    let scaled = scale16by8(rgb.anim_tick, qadd8(rgb.speed, 16));
+    let scaled = scale16by8(rgb.anim_tick as u16, qadd8(rgb.speed, 16));
     if scaled.is_multiple_of(10) {
         let idx = random8_max(LED_COUNT as u8) as usize;
         let delta_h: i8 = ((rgb.hue.wrapping_add(180).wrapping_mul(4)) as i16 / 4) as i8;
@@ -969,7 +969,7 @@ pub fn render_raindrops(rgb: &mut RgbMatrix) {
 pub fn render_riverflow(rgb: &mut RgbMatrix) {
     let sat = rgb.sat;
     for i in 0..LED_COUNT {
-        let timed = (rgb.anim_tick as u32).wrapping_add((i * 315) as u32);
+        let timed = rgb.anim_tick.wrapping_add((i * 315) as u32);
         let t8 = scale16by8(timed as u16, rgb.speed.wrapping_div(8));
         let raw = sin8(t8 as u8);
         let diff: i8 = (raw as i16 - 128i16) as i8;
@@ -981,7 +981,7 @@ pub fn render_riverflow(rgb: &mut RgbMatrix) {
 
 // ── Mode 33: SOLID_REACTIVE ─────────────────────────────────────────
 pub fn render_solid_reactive(rgb: &mut RgbMatrix) {
-    let max_tick = 65535u16 / qadd8(rgb.speed, 1) as u16;
+    let max_tick = 65535u32 / qadd8(rgb.speed, 1) as u32;
     let sat = rgb.sat;
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
@@ -994,7 +994,7 @@ pub fn render_solid_reactive(rgb: &mut RgbMatrix) {
                 break;
             }
         }
-        let offset = scale16by8(tick, qadd8(rgb.speed, 1));
+        let offset = scale16by8(tick as u16, qadd8(rgb.speed, 1));
         let hue = rgb.hue.wrapping_add(scale8(255u8.wrapping_sub(offset as u8), 64));
         let val = rgb.val;
         let (r, g, b) = hsv_to_rgb(hue, sat, val);
@@ -1004,7 +1004,7 @@ pub fn render_solid_reactive(rgb: &mut RgbMatrix) {
 
 // ── Mode 34: SOLID_REACTIVE_SIMPLE ──────────────────────────────────
 pub fn render_solid_reactive_simple(rgb: &mut RgbMatrix) {
-    let max_tick = 65535u16 / qadd8(rgb.speed, 1) as u16;
+    let max_tick = 65535u32 / qadd8(rgb.speed, 1) as u32;
     let sat = rgb.sat;
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
@@ -1017,7 +1017,7 @@ pub fn render_solid_reactive_simple(rgb: &mut RgbMatrix) {
                 break;
             }
         }
-        let offset = scale16by8(tick, qadd8(rgb.speed, 1));
+        let offset = scale16by8(tick as u16, qadd8(rgb.speed, 1));
         let val = scale8(255u8.wrapping_sub(offset as u8), rgb.val);
         let (r, g, b) = hsv_to_rgb(rgb.hue, sat, val);
         rgb.set_color(i, r, g, b);
@@ -1041,7 +1041,7 @@ pub fn render_splash(rgb: &mut RgbMatrix) {
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
             let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
-            let tick = scale16by8(elapsed, qadd8(rgb.speed, 1));
+            let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
             hsv_h = hsv_h.wrapping_add(effect as u8);
@@ -1069,7 +1069,7 @@ pub fn render_multisplash(rgb: &mut RgbMatrix) {
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
             let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
-            let tick = scale16by8(elapsed, qadd8(rgb.speed, 1));
+            let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
             hsv_h = hsv_h.wrapping_add(effect as u8);
@@ -1097,7 +1097,7 @@ pub fn render_solid_splash(rgb: &mut RgbMatrix) {
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
             let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
-            let tick = scale16by8(elapsed, qadd8(rgb.speed, 1));
+            let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
             hsv_v = qadd8(hsv_v, 255u16.wrapping_sub(effect) as u8);
@@ -1123,7 +1123,7 @@ pub fn render_solid_multisplash(rgb: &mut RgbMatrix) {
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
             let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
-            let tick = scale16by8(elapsed, qadd8(rgb.speed, 1));
+            let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
             hsv_v = qadd8(hsv_v, 255u16.wrapping_sub(effect) as u8);
@@ -1162,7 +1162,7 @@ pub fn render_solid_reactive_cross(rgb: &mut RgbMatrix) {
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
             let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
-            let tick = scale16by8(elapsed, qadd8(rgb.speed, 1));
+            let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let (_h, v) = fn_solid_reactive_cross_math(dx, dy, dist, tick);
             hsv_v = qadd8(hsv_v, v);
         }
@@ -1188,7 +1188,7 @@ pub fn render_solid_reactive_multicross(rgb: &mut RgbMatrix) {
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
             let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
-            let tick = scale16by8(elapsed, qadd8(rgb.speed, 1));
+            let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let (_h, v) = fn_solid_reactive_cross_math(dx, dy, dist, tick);
             hsv_v = qadd8(hsv_v, v);
         }
@@ -1214,7 +1214,7 @@ pub fn render_solid_reactive_nexus(rgb: &mut RgbMatrix) {
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
             let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
-            let tick = scale16by8(elapsed, qadd8(rgb.speed, 1));
+            let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
             if dist > 72 { effect = 255; }
@@ -1253,7 +1253,7 @@ pub fn render_solid_reactive_nexus_v2(rgb: &mut RgbMatrix) {
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
             let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
-            let tick = scale16by8(elapsed, qadd8(rgb.speed, 1));
+            let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
             if dist > 72 { effect = 255; }
@@ -1288,7 +1288,7 @@ pub fn render_solid_reactive_multinexus(rgb: &mut RgbMatrix) {
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
             let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
-            let tick = scale16by8(elapsed, qadd8(rgb.speed, 1));
+            let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
             if dist > 72 { effect = 255; }
@@ -1323,7 +1323,7 @@ pub fn render_solid_reactive_wide(rgb: &mut RgbMatrix) {
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
             let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
-            let tick = scale16by8(elapsed, qadd8(rgb.speed, 1));
+            let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_add(dist as u16 * 5);
             if effect > 255 { effect = 255; }
             hsv_v = qadd8(hsv_v, 255u16.wrapping_sub(effect) as u8);
@@ -1350,7 +1350,7 @@ pub fn render_solid_reactive_multiwide(rgb: &mut RgbMatrix) {
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
             let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
-            let tick = scale16by8(elapsed, qadd8(rgb.speed, 1));
+            let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_add(dist as u16 * 5);
             if effect > 255 { effect = 255; }
             hsv_v = qadd8(hsv_v, 255u16.wrapping_sub(effect) as u8);
@@ -1368,7 +1368,7 @@ pub fn render_starlight(rgb: &mut RgbMatrix) {
     let diff: i8 = (raw as i16 - 128i16) as i8;
     let v = scale8(abs8(diff).wrapping_mul(2), rgb.val);
     let (r, g, b) = hsv_to_rgb(rgb.hue, rgb.sat, v);
-    if scale16by8(rgb.anim_tick, qadd8(rgb.speed, 5)).is_multiple_of(5) {
+    if scale16by8(rgb.anim_tick as u16, qadd8(rgb.speed, 5)).is_multiple_of(5) {
         let idx = random8_max(LED_COUNT as u8) as usize;
         rgb.set_color(idx, r, g, b);
     }
@@ -1380,7 +1380,7 @@ pub fn render_starlight_dual_hue(rgb: &mut RgbMatrix) {
     let raw = sin8(time);
     let diff: i8 = (raw as i16 - 128i16) as i8;
     let v = scale8(abs8(diff).wrapping_mul(2), rgb.val);
-    if scale16by8(rgb.anim_tick, qadd8(rgb.speed, 5)).is_multiple_of(5) {
+    if scale16by8(rgb.anim_tick as u16, qadd8(rgb.speed, 5)).is_multiple_of(5) {
         let idx = random8_max(LED_COUNT as u8) as usize;
         // rand() % (30+1 - -30) + -30 = random in [-30, 30]
         let offset: i8 = (random8() % 61) as i8 - 30;
@@ -1396,7 +1396,7 @@ pub fn render_starlight_dual_sat(rgb: &mut RgbMatrix) {
     let raw = sin8(time);
     let diff: i8 = (raw as i16 - 128i16) as i8;
     let v = scale8(abs8(diff).wrapping_mul(2), rgb.val);
-    if scale16by8(rgb.anim_tick, qadd8(rgb.speed, 5)).is_multiple_of(5) {
+    if scale16by8(rgb.anim_tick as u16, qadd8(rgb.speed, 5)).is_multiple_of(5) {
         let idx = random8_max(LED_COUNT as u8) as usize;
         let offset: i8 = (random8() % 61) as i8 - 30;
         let sat = (rgb.sat as i16 + offset as i16).clamp(0, 255) as u8;
@@ -1486,12 +1486,6 @@ pub fn tick_animation(rgb: &mut RgbMatrix) {
     if rgb.mode == 0 {
         return; // Solid — manual set_hsv controls color
     }
-    // tick_animation() is called every 20ms from the main loop. The base step
-    // is 20 (anim_tick tracks real milliseconds, matching C g_rgb_timer); bumped
-    // to 45 (~2.25× base) for a global animation-speed boost on top of the max
-    // speed setting. Every effect's `time` is linear in anim_tick, so this scales
-    // all 50 modes (and reactive decay) uniformly.
-    rgb.anim_tick = rgb.anim_tick.wrapping_add(45);
 
     match rgb.mode {
         1 => render_breathing(rgb),
