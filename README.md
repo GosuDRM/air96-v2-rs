@@ -70,61 +70,55 @@ probe-rs download --chip STM32F072CBTx target/thumbv6m-none-eabi/release/air96-v
 
 ---
 
-## ⌨️ Keymap
+## ⌨️ Shortcuts
 
-### Layer 0 — Mac base
+Two function layers, toggled by the **Fn** key (right Command on Mac / right Alt on Win):
 
-|   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| ESC | 🔅 | 🔆 | Task | Search | Siri | DND | ⏮ | ⏯ | ⏭ | 🔇 | 🔉 | 🔊 | Screenshot | DEL | HOME | END | PGUP | PGDN |
-| `` ` `` | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 0 | - | = | ⌫ | | NUM | / | * | - |
-| TAB | Q | W | E | R | T | Y | U | I | O | P | [ | ] | \\ | | 7 | 8 | 9 | + |
-| CAPS | A | S | D | F | G | H | J | K | L | ; | ' | ENTER | | | 4 | 5 | 6 | |
-| SHIFT | | Z | X | C | V | B | N | M | , | . | / | SHIFT | | | ↑ | 1 | 2 | 3 | ENTER |
-| CTRL | OPT | CMD | | | | SPACE | | | | CMD | Fn | CTRL | | | ← | ↓ | → | 0 | . |
+### Mac base (layer 0)
 
-Modifiers: `Ctrl` `Option` `Command` (Mac layout)
+Standard ANSI 96-key layout with `Ctrl` `Option` `Command` modifiers, dedicated
+Delete cluster, and a 17-key numpad on the right edge. Top row carries
+brightness, Mac media (`Task` `Search` `Siri` `DND`), media transport, and volume.
 
-### Layer 1 — Mac Fn
+### Mac Fn (layer 1) — hold Fn
 
-Hold **Fn** (right Command position) to access:
+| Shortcut | Function |
+|----------|----------|
+| `1` `2` `3` | Switch to Bluetooth channel 1/2/3 (tap) / pair (hold 3s) |
+| `4` | 2.4 GHz wireless (tap) / pair (hold 3s) |
+| `F13` (PrtSc) | Factory reset (hold 3s) |
+| `F14` (ScrLk) | Sleep mode toggle |
+| `F15` (Pause) | Battery indicator toggle |
+| `Print` (PrtSc) | Area screenshot |
+| `Z` / `X` | RGB speed down / up |
+| `C` | RGB speed reset |
+| `↑` | RGB brightness up |
+| `←` / `→` | RGB effect previous / next |
+| `↓` | RGB brightness down |
+| `Space` | RGB test (7-colour cycle) |
 
-| Key | Function |
-|-----|----------|
-| 1 | Bluetooth 1 (tap = switch, hold 3s = pair) |
-| 2 | Bluetooth 2 |
-| 3 | Bluetooth 3 |
-| 4 | 2.4 GHz |
-| F13 (PrtSc) | Reset device (hold 3s for factory reset) |
-| F14 (ScrLk) | Sleep mode toggle |
-| F15 (Pause) | Battery indicator toggle |
-| Fn+Screenshot | Area screenshot |
-| Fn+Z/X/C | RGB speed down/up |
-| Fn+↑ | RGB brightness up |
-| Fn+←/↓/→ | RGB mode / brightness down / hue |
-| Fn+Space | RGB test (7-colour cycle) |
+### Win base (layer 2)
 
-### Layer 2 — Win base
+Same physical layout with `F1`–`F12` on the top row and `Ctrl` `Win` `Alt` modifiers
+in the bottom-left cluster.
 
-Same layout as Mac base but with **F1–F12** on the top row and `Ctrl` `Win` `Alt` modifiers.
+### Win Fn (layer 3)
 
-### Layer 3 — Win Fn
+Same shortcuts as Mac Fn, with media transport keys mapped to the top row
+(brightness, prev/next/play, mute/volume) when the Win layer is active.
 
-Same as Mac Fn, plus media keys accessible on the top row (brightness + media controls).
+### Function (layer 4) — hold Fn, then tap Shift (or Fn + M)
 
-### Layer 4 — Function (Side LED + RGB controls)
+Side LED and alternate RGB controls (matches C firmware `MO(4)`):
 
-Hold **Fn + Shift** (or Fn + M) to access (same as C firmware `MO(4)`):
-
-| Key | Function |
-|-----|----------|
-| B | RGB test (7-colour cycle) |
-| , | Side LED speed down |
-| . | Side LED speed up |
-| ↑ | Side LED brightness up |
-| ← | Side LED mode cycle |
-| ↓ | Side LED brightness down |
-| → | Side LED hue cycle |
+| Shortcut | Function |
+|----------|----------|
+| `B` | RGB test (7-colour cycle) |
+| `,` / `.` | Side LED speed down / up |
+| `↑` | Side LED brightness up |
+| `←` | Side LED mode cycle |
+| `↓` | Side LED brightness down |
+| `→` | Side LED hue cycle |
 
 ---
 
