@@ -1487,11 +1487,11 @@ pub fn tick_animation(rgb: &mut RgbMatrix) {
         return; // Solid — manual set_hsv controls color
     }
     // tick_animation() is called every 20ms from the main loop. The base step
-    // is 20 (anim_tick tracks real milliseconds, matching C g_rgb_timer); ×1.5
-    // = 30 applies a global +50% animation-speed boost on top of the max speed
-    // setting. Every effect's `time` is linear in anim_tick, so this scales all
-    // 50 modes (and reactive decay) uniformly.
-    rgb.anim_tick = rgb.anim_tick.wrapping_add(30);
+    // is 20 (anim_tick tracks real milliseconds, matching C g_rgb_timer); bumped
+    // to 45 (~2.25× base) for a global animation-speed boost on top of the max
+    // speed setting. Every effect's `time` is linear in anim_tick, so this scales
+    // all 50 modes (and reactive decay) uniformly.
+    rgb.anim_tick = rgb.anim_tick.wrapping_add(45);
 
     match rgb.mode {
         1 => render_breathing(rgb),

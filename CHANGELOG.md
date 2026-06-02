@@ -1,5 +1,19 @@
 # Changelog
 
+## v4.1.5 (2026-06-02)
+
+Another +50% animation speed, and the Fn-layer hotkeys are now 1:1 with the C reference.
+
+### Changed
+
+- **Animation speed +50% again** — `anim_tick` step raised from 30 to 45 per 20ms tick (~2.25× the real-ms base). Stacks on the v4.1.4 boost.
+- **Fn hotkeys 1:1 with C reference** — Re-laid the Mac-Fn, Win-Fn, and Fn (layer 4) maps to match `keyboards/air96_v2/ansi/keymaps/default/keymap.c` exactly (anchored by base-layer keycode, since the Rust matrix has gaps the C `LAYOUT` macro hides):
+  - `fn+,` = `RGB_SPD`, `fn+.` = `RGB_SPI` (speed down/up) — previously on the arrows.
+  - `fn+←` = `RGB_MOD`, `fn+→` = `RGB_HUI`, `fn+↑` = `RGB_VAI`, `fn+↓` = `RGB_VAD`.
+  - `fn+\` = `BAT_SHOW` (was `RGB_MOD` with a tap-hold); `fn+[` = `DEV_RESET`, `fn+]` = `SLEEP_MODE` (unchanged).
+  - Layer 4 side controls shifted onto `←`/`↓`/`→` (`SIDE_MOD`/`SIDE_VAD`/`SIDE_HUI`) and `,`/`.`/`↑` (`SIDE_SPD`/`SIDE_SPI`/`SIDE_VAI`); `MO(4)` corrected onto LSFT/M/RSFT and right-Fn.
+  - `RGB_HUI` step 16 → 8 and `RGB_MOD` reverted to plain next-effect-on-press, matching QMK defaults.
+
 ## v4.1.4 (2026-06-02)
 
 RGB animation now defaults to maximum speed, plus a global +50% speed boost.

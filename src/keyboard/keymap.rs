@@ -152,17 +152,17 @@ pub const LAYER_MAC_FN: [[u16; 21]; 6] = [
     // Row 1: __, LNK_BLE1, LNK_BLE2, LNK_BLE3, LNK_RF, __... (transparent for rest)
     [NR, KC_LNK_BLE1, KC_LNK_BLE2, KC_LNK_BLE3, KC_LNK_RF, NR, NR, NR, NR, NR, NR, NR, NR, NR,
      NR, NR, NR, NR, NR, NR, NR],
-    // Row 2: __... DEV_RESET at 11, SLEEP_MODE at 12, RGB_MOD at 13, INS at 14
-    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, KC_DEV_RESET, KC_SLEEP_MODE, KC_RGB_MOD,
+    // Row 2: fn+[ =DEV_RESET(11), fn+] =SLEEP_MODE(12), fn+\ =BAT_SHOW(13), fn+Del=INS(14) — 1:1 with C
+    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, KC_DEV_RESET, KC_SLEEP_MODE, KC_BAT_SHOW,
      0x49, NR, NR, NR, NR, NR, NR],
     // Row 3: all transparent
     [NR; 21],
-    // Row 4: MO(4) at 0,8,12; RGB_SPI at 9; RGB_VAI at 15 (fn+UP)
-    [MO | 4, NR, NR, NR, NR, NR, NR, NR, MO | 4, KC_RGB_SPI, NR, NR, MO | 4,
-     NR, NR, KC_RGB_VAI, NR, NR, NR, NR, NR],
-    // Row 5: fn+LEFT=SPD at 14, fn+DOWN=VAD at 15, fn+RIGHT=SPI at 16, HUI at 17
+    // Row 4: MO(4) on LSFT(0)/M(8)/RSFT(13); fn+`,`=RGB_SPD(9), fn+`.`=RGB_SPI(10), fn+UP=RGB_VAI(15) — 1:1 with C
+    [MO | 4, NR, NR, NR, NR, NR, NR, NR, MO | 4, KC_RGB_SPD, KC_RGB_SPI, NR, NR, MO | 4,
+     NR, KC_RGB_VAI, NR, NR, NR, NR, NR],
+    // Row 5: fn+LEFT=RGB_MOD(14), fn+DOWN=RGB_VAD(15), fn+RIGHT=RGB_HUI(16) — 1:1 with C
     [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR,
-     KC_RGB_SPD, KC_RGB_VAD, KC_RGB_SPI, KC_RGB_HUI, NR, NR, NR],
+     KC_RGB_MOD, KC_RGB_VAD, KC_RGB_HUI, NR, NR, NR, NR],
 ];
 
 // ═══════════════════════════════════════════════════════════════════
@@ -201,17 +201,17 @@ pub const LAYER_WIN_FN: [[u16; 21]; 6] = [
     // Row 1: same as Mac Fn (link keys on 1-4)
     [NR, KC_LNK_BLE1, KC_LNK_BLE2, KC_LNK_BLE3, KC_LNK_RF, NR, NR, NR, NR, NR, NR, NR, NR, NR,
      NR, NR, NR, NR, NR, NR, NR],
-    // Row 2: same as Mac Fn (DEV_RESET, SLEEP_MODE, RGB_MOD, INS)
-    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, KC_DEV_RESET, KC_SLEEP_MODE, KC_RGB_MOD,
+    // Row 2: same as Mac Fn — DEV_RESET, SLEEP_MODE, BAT_SHOW, INS (1:1 with C)
+    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, KC_DEV_RESET, KC_SLEEP_MODE, KC_BAT_SHOW,
      0x49, NR, NR, NR, NR, NR, NR],
     // Row 3: all transparent
     [NR; 21],
-    // Row 4: same as Mac Fn (MO(4), MO(4) at 8, RGB_SPI at 9, fn+UP=VAI)
-    [MO | 4, NR, NR, NR, NR, NR, NR, NR, MO | 4, KC_RGB_SPI, NR, NR, MO | 4,
-     NR, NR, KC_RGB_VAI, NR, NR, NR, NR, NR],
-    // Row 5: fn+LEFT=SPD at 14, fn+DOWN=VAD at 15, fn+RIGHT=SPI at 16, HUI at 17
+    // Row 4: same as Mac Fn — MO(4) on LSFT/M/RSFT, fn+`,`=RGB_SPD(9), fn+`.`=RGB_SPI(10), fn+UP=RGB_VAI(15)
+    [MO | 4, NR, NR, NR, NR, NR, NR, NR, MO | 4, KC_RGB_SPD, KC_RGB_SPI, NR, NR, MO | 4,
+     NR, KC_RGB_VAI, NR, NR, NR, NR, NR],
+    // Row 5: fn+LEFT=RGB_MOD(14), fn+DOWN=RGB_VAD(15), fn+RIGHT=RGB_HUI(16) — 1:1 with C
     [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR,
-     KC_RGB_SPD, KC_RGB_VAD, KC_RGB_SPI, KC_RGB_HUI, NR, NR, NR],
+     KC_RGB_MOD, KC_RGB_VAD, KC_RGB_HUI, NR, NR, NR, NR],
 ];
 
 // ═══════════════════════════════════════════════════════════════════
@@ -225,9 +225,9 @@ pub const LAYER_FN: [[u16; 21]; 6] = [
     // Row 4: RGB_TEST at 4; SIDE_SPD at 9, SIDE_SPI at 10; SIDE_VAI at 15
     [NR, NR, NR, NR, KC_RGB_TEST, NR, NR, NR, NR, KC_SIDE_SPD, KC_SIDE_SPI, NR, NR,
      NR, NR, KC_SIDE_VAI, NR, NR, NR, NR, NR],
-    // Row 5: MO(4) at 11; SIDE_MOD at 15, SIDE_VAD at 16, SIDE_HUI at 17
-    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, MO | 4, NR, NR, NR,
-     KC_SIDE_MOD, KC_SIDE_VAD, KC_SIDE_HUI, NR, NR, NR],
+    // Row 5: MO(4) on right-Fn(10); SIDE_MOD on LEFT(14), SIDE_VAD on DOWN(15), SIDE_HUI on RIGHT(16) — 1:1 with C
+    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, MO | 4, NR, NR, NR,
+     KC_SIDE_MOD, KC_SIDE_VAD, KC_SIDE_HUI, NR, NR, NR, NR],
 ];
 
 // ── Keymap lookup ──────────────────────────────────────────────────────
