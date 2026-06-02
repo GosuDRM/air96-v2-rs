@@ -194,12 +194,12 @@ impl Device {
             }
             k if (keymap::KC_LNK_RF..=keymap::KC_LNK_BLE3).contains(&k) => {
                 let ch = lnk_to_channel(k);
-                if pressed && self.proto.link_mode != LinkMode::Usb {
+                if pressed {
                     self.rf_sw_temp = ch as u8;
                     self.rf_sw_press = true;
                     self.rf_sw_press_delay = 0; // Reset delay on press
                     self.break_all_keys();
-                } else if !pressed && self.rf_sw_press {
+                } else if self.rf_sw_press {
                     self.rf_sw_press = false;
                     if self.rf_sw_press_delay < 60 {
                         self.proto.link_mode = ch;
@@ -207,6 +207,7 @@ impl Device {
                         self.proto.ble_channel = ch as u8;
                         self.proto.build_link_cmd(CMD_SET_LINK);
                         flush(&mut self.proto);
+                        self.side.blink_rf(3);
                     }
                 }
             }
@@ -1097,30 +1098,6 @@ fn main() -> ! {
                     dev.rgb.enabled = true;
                 }
 
-                // ── Long press handler ────────────────────────────────
-                if dev.rf_sw_press {
-                    dev.rf_sw_press_delay += 1;
-                    if dev.rf_sw_press_delay >= 60 {
-                        dev.rf_sw_press = false;
-                        let ch = dev.rf_sw_temp;
-                        dev.proto.link_mode = LinkMode::from_u8(ch);
-                        dev.proto.rf_channel = ch;
-                        dev.proto.ble_channel = ch;
-                        dev.proto.build_link_cmd(CMD_SET_LINK);
-                        uart_flush!(&dev.proto);
-                        uart_wait_rx!(dev, 20);
-                        for _ in 0..5 {
-                            dev.proto.build_link_cmd(wireless::uart::CMD_NEW_ADV);
-                            uart_flush!(&dev.proto);
-                            uart_wait_rx!(dev, 20);
-                            if dev.proto.f_rf_new_adv_ok { break; }
-                        }
-                        dev.side.blink_rf(3);
-                    }
-                } else {
-                    dev.rf_sw_press_delay = 0;
-                }
-
                 if dev.dev_reset_press {
                     dev.dev_reset_press_delay += 1;
                     if dev.dev_reset_press_delay >= 60 {
@@ -1192,6 +1169,30 @@ fn main() -> ! {
                 } else {
                     dev.rgb_mod_press_delay = 0;
                 }
+            }
+
+            // ── Long press handler (every tick = 1ms) ──────────────────
+            if dev.rf_sw_press {
+                dev.rf_sw_press_delay += 1;
+                if dev.rf_sw_press_delay >= 60 {
+                    dev.rf_sw_press = false;
+                    let ch = dev.rf_sw_temp;
+                    dev.proto.link_mode = LinkMode::from_u8(ch);
+                    dev.proto.rf_channel = ch;
+                    dev.proto.ble_channel = ch;
+                    dev.proto.build_link_cmd(CMD_SET_LINK);
+                    uart_flush!(&dev.proto);
+                    uart_wait_rx!(dev, 20);
+                    for _ in 0..5 {
+                        dev.proto.build_link_cmd(wireless::uart::CMD_NEW_ADV);
+                        uart_flush!(&dev.proto);
+                        uart_wait_rx!(dev, 20);
+                        if dev.proto.f_rf_new_adv_ok { break; }
+                    }
+                    dev.side.blink_rf(3);
+                }
+            } else {
+                dev.rf_sw_press_delay = 0;
             }
 
             t200 += 1;
