@@ -968,6 +968,18 @@ fn main() -> ! {
         // Always poll USB HID to flush reports/process tokens as fast as possible
         let _usb_configured = usb_hid.poll();
 
+        // USB suspend/resume edge — mirror QMK's suspend_power_down_kb / wakeup_init
+        // hooks so LEDs go dark the same cycle the host signals suspend, not 1s later.
+        let (just_suspended, just_resumed) = usb_hid.take_suspend_edge();
+        if just_suspended {
+            dev.rgb.set_all(0, 0, 0);
+            dev.rgb.dirty1 = true;
+            dev.rgb.dirty2 = true;
+        } else if just_resumed {
+            dev.rgb.dirty1 = true;
+            dev.rgb.dirty2 = true;
+        }
+
         // One-shot NumLock at boot so numpad works on Linux without manual toggle
         if !dev.boot_numlock_done && usb_hid.configured() {
             usb_hid.send_keyboard(0, &[0x53, 0, 0, 0, 0, 0]); // NumLock press

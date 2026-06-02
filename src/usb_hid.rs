@@ -114,6 +114,10 @@ pub struct UsbHid<'a> {
     led_state: u8,
     /// Tracks suspend state for edge detection
     suspended: bool,
+    /// Latched: true for one poll cycle on the suspend edge (consumed by take_suspend_edge)
+    just_suspended: bool,
+    /// Latched: true for one poll cycle on the resume edge
+    just_resumed: bool,
     pending_keyboard_report: Option<[u8; 9]>,
     pending_nkro_report: Option<[u8; 33]>,
 }
@@ -126,7 +130,7 @@ impl<'a> UsbHid<'a> {
         let device = UsbDeviceBuilder::new(bus, UsbVidPid(USB_VID, USB_PID))
             .manufacturer("NuPhy")
             .product("Air96 V2 Keyboard")
-            .serial_number("v4.4.0")
+            .serial_number("v4.5.0")
             .device_class(0x00)
             .device_sub_class(0x00)
             .device_protocol(0x00)
@@ -139,6 +143,8 @@ impl<'a> UsbHid<'a> {
             system,
             led_state: 0,
             suspended: false,
+            just_suspended: false,
+            just_resumed: false,
             pending_keyboard_report: None,
             pending_nkro_report: None,
         }
@@ -147,14 +153,22 @@ impl<'a> UsbHid<'a> {
     /// Poll the USB device and HID classes. Returns true if data was exchanged.
     /// Also detects suspend/resume transitions and processes host LED reports.
     pub fn poll(&mut self) -> bool {
-        let _was_suspended = self.suspended;
+        let was_suspended = self.suspended;
 
         let result = self.device.poll(&mut [&mut self.keyboard, &mut self.consumer, &mut self.system]);
 
-        // Suspend / resume detection
+        // Suspend / resume edge detection (latched; consumed by take_suspend_edge).
+        // Mirrors QMK's suspend_power_down_kb / suspend_wakeup_init_kb hooks so
+        // the main loop can react on the same cycle the host signal arrives,
+        // not after the 1s sleep-handler debounce.
         let state = self.device.state();
         let is_suspended = state == UsbDeviceState::Suspend;
         self.suspended = is_suspended;
+        if !was_suspended && is_suspended {
+            self.just_suspended = true;
+        } else if was_suspended && !is_suspended {
+            self.just_resumed = true;
+        }
 
         // Read host LED state via SET_REPORT or OUT endpoint (boot keyboard)
         let mut led_buf = [0u8; 8];
@@ -183,6 +197,15 @@ impl<'a> UsbHid<'a> {
     /// Returns true if the device is currently suspended.
     pub fn is_suspended(&self) -> bool {
         self.suspended
+    }
+
+    /// Returns (just_suspended, just_resumed) and clears the latches.
+    /// Call once per main loop iteration after `poll()`.
+    pub fn take_suspend_edge(&mut self) -> (bool, bool) {
+        let edge = (self.just_suspended, self.just_resumed);
+        self.just_suspended = false;
+        self.just_resumed = false;
+        edge
     }
 
     /// Return the current keyboard LED state as reported by the host.

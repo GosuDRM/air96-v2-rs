@@ -1,5 +1,13 @@
 # Changelog
 
+## v4.5.0 (2026-06-02)
+
+Immediate USB suspend LED-off — matches C reference's `suspend_power_down_kb` hook.
+
+### Fixed
+
+- **LEDs stay on for 1s after PC shutdown** — The Rust port's `Sleep_Handle` was waiting for the 1s USB suspend debounce before powering off `dc_boost`/`sdb1`/`sdb2`, so the RGB matrix kept writing the live animation to the (still-powered) LED drivers during that window. The C version's QMK `suspend_power_down_kb` hook writes all-zero PWM to the IS31FL3733 on the same cycle the host signals suspend, then `Sleep_Handle` adds the GPIO power-down 1s later. Added a latched suspend/resume edge in `UsbHid::poll()` + `take_suspend_edge()` and a handler in the main loop that zeros the RGB matrix and marks both drivers dirty the instant the edge fires. The 1s debounce still owns the actual GPIO power-down and wakeup state machine — only the visual "off" cue is now immediate.
+
 ## v4.3.0 (2026-06-02)
 
 Bug audit — critical animation and sleep fixes.
