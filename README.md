@@ -1,24 +1,62 @@
-# Air96 V2 — Rust Firmware
+# ⌨️ Air96 V2 — Rust Firmware
 
-Full Rust rewrite of the Air96 V2 wireless mechanical keyboard firmware.
-Complete port from the original QMK C firmware, with all bug/latency/optimization
-fixes applied and new features added. **Stable daily-driver.**
+> A complete, from-scratch **Rust** rewrite of the NuPhy Air96 V2 wireless mechanical keyboard firmware — every QMK C feature ported, with bug/latency/optimization fixes and new capabilities layered on top. **Stable daily-driver.**
 
-**Target:** STM32F072CBTx — Cortex-M0+, 128 KB flash, 16 KB RAM  
-**Wireless:** NRF52832 module (Bluetooth LE + 2.4 GHz proprietary) via UART  
-**LED:** Dual IS31FL3733 drivers (110 RGB LEDs), 10 side LEDs, 50 animation modes  
-**USB:** Built-in USB FS peripheral — composite HID (keyboard + consumer + system control)
+[![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](LICENSE)
+[![MCU](https://img.shields.io/badge/MCU-STM32F072CBTx-brightgreen.svg)](#)
+[![Rust](https://img.shields.io/badge/rust-no__std-orange.svg)](#)
+[![Wireless](https://img.shields.io/badge/wireless-BLE%20%2B%202.4GHz-blueviolet.svg)](#)
+[![VIA](https://img.shields.io/badge/VIA-supported-success.svg)](#)
+
+| | |
+|---|---|
+| **Target** | STM32F072CBTx — Cortex-M0+, 128 KB flash, 16 KB RAM |
+| **Wireless** | NRF52832 module (Bluetooth LE + 2.4 GHz proprietary) over UART |
+| **LED** | Dual IS31FL3733 drivers — 110 RGB keys + 10 side LEDs, 50 animation modes |
+| **USB** | Built-in USB FS — composite HID (keyboard + NKRO + consumer + system) |
 
 ---
 
-## What's New (v4.6.0)
+## 📑 Contents
 
-- 🎛️ **VIA support** — Remap the dynamic keymap and control the RGB matrix live from the VIA app. RAW HID collection embedded as Report ID 3 inside the existing boot-kbd HIDClass (no 4th interface, no EP-memory overflow). Protocol v12, channel 3 reads/writes `RgbMatrix.{val,mode,speed,hue,sat}` in place. `via/Air96 V2 via3.json` carries the 24 custom keycodes.
-- 💡 **Immediate USB suspend LED-off** — RGB matrix is zeroed the same cycle the host signals suspend (mirrors C `suspend_power_down_kb`), not after the 1s sleep-handler debounce. No more ~1s of frozen animation on PC shutdown.
+- [✨ What's New](#-whats-new)
+- [🌟 Features](#-features)
+- [🔨 Build](#-build)
+- [⚡ Flash](#-flash)
+- [⌨️ Shortcuts](#-shortcuts)
+- [📡 Wireless Modes](#-wireless-modes)
+- [🏗️ Architecture](#-architecture)
+- [📦 Dependencies](#-dependencies)
+- [📄 License](#-license)
 
-Previous: v4.3.0 — bug audit fixes, chunked I2C flush, smooth RGB animation, BLE pairing from USB mode.
+---
+
+## ✨ What's New
+
+### v4.7.0
+
+- 🌙 **LEDs now actually turn off at PC shutdown/suspend** — the suspend dark-frame is held by a persistent render gate that mirrors the C reference's suspend spin, instead of a one-shot frame the animation/side renderers overwrote within ~16 ms. Caps/Num indicator LEDs go dark too, and resume repaints automatically. *(Completes the v4.5.0 fix.)*
+
+### v4.6.0
+
+- 🎛️ **VIA support** — remap the dynamic keymap and control the RGB matrix live from the VIA app. RAW HID embedded as Report ID 3 inside the existing boot-kbd interface (no 4th interface, no EP-memory overflow); protocol v12, channel 3 reads/writes `RgbMatrix.{val,mode,speed,hue,sat}` in place.
+- 💡 **Immediate USB suspend LED-off** — RGB matrix zeroed the same cycle the host signals suspend (mirrors C `suspend_power_down_kb`).
 
 [Full changelog →](CHANGELOG.md)
+
+---
+
+## 🌟 Features
+
+- **Pure Rust, `no_std`** — full rewrite of the QMK C firmware for the STM32F072, no RTOS.
+- **Composite USB HID** — boot keyboard, full **NKRO**, consumer/media keys, and system control on the built-in USB FS peripheral. Driverless on Windows, macOS, and Linux.
+- **VIA support** — remap the dynamic keymap and drive the RGB matrix live from the VIA app (Report ID 3, protocol v12).
+- **Wireless** — Bluetooth LE (3 channels) + 2.4 GHz proprietary link over an NRF52832 module, with hold-to-pair and battery reporting.
+- **50 RGB matrix effects** + 5 side-LED modes — HSV control, reactive and typing-heatmap animations, per-key Caps/Num indicators.
+- **Power management** — inactivity sleep with GPIO rail power-down, plus instant LED-off on USB suspend / PC shutdown.
+- **5-layer keymap** with 35 custom keycodes (Mac/Win bases + Fn + Function layers).
+- **Config persistence** — RGB/side/sleep settings and the VIA keymap stored in on-chip flash.
+- **DFU flashing** — built-in STM32 ROM bootloader, entered by holding **Escape** on plug-in. No SWD probe required.
 
 ---
 

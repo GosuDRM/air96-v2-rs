@@ -1,5 +1,19 @@
 # Changelog
 
+## v4.7.0 (2026-06-04)
+
+USB-suspend LEDs now actually stay off at PC shutdown — completes the v4.5.0 fix.
+
+### Fixed
+
+- **LEDs stayed lit after PC shutdown/suspend** — v4.5.0 zeroed the RGB matrix on the suspend edge, but the main loop kept rendering: `tick_animation()` (every 16 ms) and `side.update()` (every 1 ms) repainted the buffer, and `build_pwm_buffers()` re-lit the Caps/Num indicator LEDs (55/33) — so the dark frame was overwritten within ~16 ms and the LEDs never went dark. The C reference avoids this by parking its whole main loop in a suspend spin (`chibios.c:181`) so no rendering runs while `USB_DRIVER.state == USB_SUSPENDED`. Replicated that with a persistent `leds_suspended` gate: the side/animation/indicator render block is skipped while the host holds the bus suspended, the suspend edge also clears `caps_lock`/`num_lock`, and resume repaints (mode 0 via `set_hsv`, animated modes refill on the next tick). Gated on USB link mode so a charge-only Suspend in wireless mode can't blank the board. The 1 s sleep-handler GPIO power-down still runs as a complementary power saver.
+- **macOS area screenshot (`MAC_PRTA`) sent the wrong key** — the non-NKRO branch sent `0x23` (`KC_6`) instead of `0x21` (`KC_4`), so on macOS (which runs with NKRO off) the area-screenshot key fired `Cmd+Shift+6` (a no-op) instead of `Cmd+Shift+4`. The Windows/NKRO path (`Win+Shift+S`) was already correct. Caught by a full C-vs-Rust keymap + handler diff across all five layers.
+
+### Files
+
+- `src/main.rs` — persistent USB-suspend render gate (`leds_suspended`) + mode-aware resume repaint; `MAC_PRTA` non-NKRO keycode `0x23` → `0x21`
+- `Cargo.toml` / `src/usb_hid.rs` / `CHANGELOG.md` — bumped to 4.7.0
+
 ## v4.6.0 (2026-06-03)
 
 VIA support — wired remapping of the dynamic keymap and live RGB matrix control.

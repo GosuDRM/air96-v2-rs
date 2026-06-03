@@ -423,7 +423,7 @@ impl Device {
                     if self.nkro_enabled {
                         self.current_keys[0] = 0x16;
                     } else {
-                        self.current_keys[0] = 0x23;
+                        self.current_keys[0] = 0x21; // KC_4 — macOS Cmd+Shift+4 area screenshot (was 0x23 = KC_6)
                     }
                     if self.proto.link_mode == LinkMode::Usb {
                         if self.nkro_enabled {
@@ -969,16 +969,36 @@ fn main() -> ! {
         // Always poll USB HID to flush reports/process tokens as fast as possible
         let _usb_configured = usb_hid.poll(&mut dev.rgb, &mut dev.save_pending);
 
-        // USB suspend/resume edge — mirror QMK's suspend_power_down_kb / wakeup_init
-        // hooks so LEDs go dark the same cycle the host signals suspend, not 1s later.
+        // USB suspend gate — mirror QMK's suspend_power_down_kb /
+        // rgb_matrix_set_suspend_state(true): while the host holds the bus
+        // suspended the matrix must render dark *and stay dark*. QMK parks its
+        // whole main loop in a suspend spin (chibios.c:181) so no normal
+        // rendering runs; we replicate that by skipping every LED repaint below
+        // while `leds_suspended` holds (see the `if tick && !leds_suspended`
+        // block). Without this the one-shot black frame is overwritten within
+        // ~16ms by tick_animation()/side.update() and the LEDs never go dark —
+        // which is exactly why they stayed lit at PC shutdown.
+        // Gated on USB link mode: in wireless mode the USB peripheral can report
+        // Suspend while only charging, which must NOT blank the keyboard.
+        let usb_active_link = dev.proto.link_mode == LinkMode::Usb;
+        let leds_suspended = usb_active_link && usb_hid.is_suspended();
         let (just_suspended, just_resumed) = usb_hid.take_suspend_edge();
-        if just_suspended {
+        if just_suspended && usb_active_link {
+            // Clear the lock indicators too: build_pwm_buffers() force-lights
+            // LED 55/33 white whenever caps/num is set, even over a black buffer.
+            dev.rgb.caps_lock = false;
+            dev.rgb.num_lock = false;
             dev.rgb.set_all(0, 0, 0);
-            dev.rgb.dirty1 = true;
-            dev.rgb.dirty2 = true;
-        } else if just_resumed {
-            dev.rgb.dirty1 = true;
-            dev.rgb.dirty2 = true;
+        } else if just_resumed && usb_active_link {
+            // Repaint on wake: animated modes refill on the next tick_animation,
+            // but mode 0 (solid) only renders via set_hsv, so restore it
+            // explicitly or it stays dark after the suspend-time zeroing.
+            if dev.rgb.mode == 0 {
+                dev.rgb.set_hsv(dev.rgb.hue, dev.rgb.sat, dev.rgb.val);
+            } else {
+                dev.rgb.dirty1 = true;
+                dev.rgb.dirty2 = true;
+            }
         }
 
         // One-shot NumLock at boot so numpad works on Linux without manual toggle
@@ -1334,7 +1354,11 @@ fn main() -> ! {
         }
 
         // ── Side LED update + animation tick ──────────────────────────
-        if tick {
+        // Skipped while USB-suspended so the dark frame written on the suspend
+        // edge is not immediately repainted by the animation/side renderers —
+        // this is the fix for LEDs staying lit after PC shutdown. Mirrors QMK
+        // halting all rendering during suspend.
+        if tick && !leds_suspended {
             dev.side.update(&dev.proto, 1, keyboard_leds, &mut dev.f_bat_hold);
 
             // Advance animation clock by 1ms (matches C g_rgb_timer)
