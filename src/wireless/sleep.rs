@@ -63,16 +63,22 @@ impl SleepManager {
         // ── Goto-sleep transition ──
         if self.f_goto_sleep {
             self.f_goto_sleep = false;
-            if self.sleep_enabled {
-                if proto.rf_state == RfState::Connect {
-                    // Connected — tell NRF to go to low-power mode
-                    proto.build_link_cmd(CMD_SET_CONFIG);
-                } else {
-                    proto.build_link_cmd(CMD_SLEEP);
-                }
-                // Power down handled by main.rs GPIO
+            // Guard (mirrors C Sleep_Handle): never sleep while USB is the active
+            // link and the host has NOT suspended the bus. Without this a stray
+            // CMD_24G_SUSPEND from the NRF powers the board down mid-use.
+            if proto.link_mode == LinkMode::Usb && !usb_suspended {
+                return;
             }
-            self.f_wakeup_prepare = true;
+            // Tell the NRF to enter low-power mode. Unconditional once we've
+            // decided to sleep — the sleep_enable gate lives in the connected
+            // idle check below, matching C (USB-suspend / disconnect / linking
+            // timeout still sleep regardless of the user toggle, to save power).
+            if proto.rf_state == RfState::Connect {
+                proto.build_link_cmd(CMD_SET_CONFIG);
+            } else {
+                proto.build_link_cmd(CMD_SLEEP);
+            }
+            self.f_wakeup_prepare = true; // Power down handled by main.rs GPIO
             return; // CMD sent inline by build_link_cmd → caller handles TX
         }
 
@@ -109,7 +115,8 @@ impl SleepManager {
                 if proto.rf_state == RfState::Connect {
                     self.rf_disconnect_time = 0;
                     self.rf_linking_time = 0;
-                    if self.no_act_time >= SLEEP_TIME_DELAY {
+                    // sleep_enable gates ONLY the connected-idle sleep (matches C).
+                    if self.sleep_enabled && self.no_act_time >= SLEEP_TIME_DELAY {
                         self.f_goto_sleep = true;
                     }
                 } else if proto.rf_state == RfState::Linking || proto.rf_state == RfState::Pairing {

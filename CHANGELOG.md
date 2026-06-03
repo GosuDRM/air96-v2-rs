@@ -1,5 +1,27 @@
 # Changelog
 
+## v4.7.1 (2026-06-04)
+
+Sleep/wake audit — disable-sleep toggle, USB-active guard, and USB remote wakeup.
+
+### Added
+
+- **USB remote wakeup** — a keypress now wakes a sleeping PC. The device advertises `supports_remote_wakeup`, so the host arms `DEVICE_REMOTE_WAKEUP` before suspending; on a keypress while suspended the firmware drives `CNTR.RESUME` (K-state, ~5 ms) then releases it — the same mechanism as C `usb_lld_wakeup_host`. usb-device 0.2 / stm32-usbd expose no device-initiated resume, so this is direct USB-peripheral register access. **Note:** the exact register/timing sequence is not yet hardware-validated; it only affects keypress-to-wake — normal suspend/resume does not depend on it.
+
+### Fixed
+
+- **"Disable sleep" (Fn+ScrLk / `KC_SLEEP_MODE`) did nothing in wireless mode** — `SleepManager.sleep_enabled` was never synced from the user toggle (it stayed `true`), and the RF-connected idle branch didn't check it at all. After ~6 min idle on BT/2.4 GHz the board slept (LEDs off, WFI) regardless of the setting, while the side-LED indicator falsely showed sleep disabled. Now synced each tick and gated on the connected-idle sleep, matching C `Sleep_Handle` (USB-suspend / disconnect / link-timeout still sleep regardless, to save battery).
+- **Spurious sleep while actively on USB** — the goto-sleep handler lacked C's guard that rejects a sleep request when USB is the active link and the host hasn't suspended the bus. A stray `CMD_24G_SUSPEND` from the NRF would cut the LED rails + WFI mid-use until the next keypress. Added the guard.
+- **Key held across suspend could linger as a phantom after wake** — on a host-driven USB resume (no recent keypress) the firmware now clears key state, mirroring C `m_break_all_key` on `!key_wake`. A key-driven wake keeps its press so the key that woke the host still registers.
+
+### Files
+
+- `src/wireless/sleep.rs` — USB-active sleep guard + `sleep_enabled` gate on the connected-idle sleep
+- `src/usb_hid.rs` — `supports_remote_wakeup` + `remote_wakeup()` (device-initiated resume)
+- `src/main.rs` — sync `dev.sleep.sleep_enabled` each tick; remote wakeup on keypress-while-suspended; stale-key flush on host-driven resume
+- `src/test.rs` — guard + sleep-disable regression tests (94 total)
+- `Cargo.toml` / `CHANGELOG.md` — bumped to 4.7.1
+
 ## v4.7.0 (2026-06-04)
 
 USB-suspend LEDs now actually stay off at PC shutdown — completes the v4.5.0 fix.

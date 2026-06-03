@@ -33,6 +33,10 @@
 
 ## ✨ What's New
 
+### v4.7.1
+
+- 😴 **Sleep/wake fixes** — the "disable sleep" toggle (Fn+ScrLk) works again, no more spurious sleep while on USB, and a **keypress now wakes a sleeping PC** (USB remote wakeup). Found via a full sleep/wake diff against the C reference.
+
 ### v4.7.0
 
 - 🌙 **LEDs now actually turn off at PC shutdown/suspend** — the suspend dark-frame is held by a persistent render gate that mirrors the C reference's suspend spin, instead of a one-shot frame the animation/side renderers overwrote within ~16 ms. Caps/Num indicator LEDs go dark too, and resume repaints automatically. *(Completes the v4.5.0 fix.)*

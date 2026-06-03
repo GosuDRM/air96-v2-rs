@@ -8,6 +8,7 @@
 //!
 //! Works on Windows, Linux, and macOS without drivers.
 
+use stm32f0xx_hal::pac;
 use stm32f0xx_hal::usb::UsbBusType;
 use usb_device::bus::UsbBusAllocator;
 use usb_device::device::UsbDeviceState;
@@ -152,10 +153,13 @@ impl<'a> UsbHid<'a> {
         let device = UsbDeviceBuilder::new(bus, UsbVidPid(USB_VID, USB_PID))
             .manufacturer("NuPhy")
             .product("Air96 V2 Keyboard")
-            .serial_number("v4.7.0")
+            .serial_number("v4.7.1")
             .device_class(0x00)
             .device_sub_class(0x00)
             .device_protocol(0x00)
+            // Advertise remote-wakeup so the host enables DEVICE_REMOTE_WAKEUP
+            // before suspending — required for keypress-to-wake (see remote_wakeup()).
+            .supports_remote_wakeup(true)
             .build();
 
         Self {
@@ -248,6 +252,30 @@ impl<'a> UsbHid<'a> {
     /// Returns true if the device is currently suspended.
     pub fn is_suspended(&self) -> bool {
         self.suspended
+    }
+
+    /// Drive a device-initiated USB resume to wake a sleeping host (remote wakeup).
+    ///
+    /// No-op unless the bus is suspended AND the host enabled DEVICE_REMOTE_WAKEUP
+    /// (which it only does because we advertise `supports_remote_wakeup`). Mirrors C
+    /// `usb_lld_wakeup_host`: usb-device 0.2 / stm32-usbd expose no device-initiated
+    /// resume, so we touch the STM32 USB peripheral directly — clear LP_MODE/FSUSP so
+    /// the transceiver clock runs, drive RESUME (K-state) for ~5 ms (USB spec: 1–15 ms),
+    /// then release it. The host then completes the resume and the next `poll()` exits
+    /// Suspend. Returns true if a wakeup was driven.
+    ///
+    /// NOTE: the bit sequence is unvalidated on hardware — only the keypress-to-wake
+    /// path exercises it; normal suspend/resume does not depend on it.
+    pub fn remote_wakeup(&mut self) -> bool {
+        if !self.suspended || !self.device.remote_wakeup_enabled() {
+            return false;
+        }
+        let usb = unsafe { &*pac::USB::ptr() };
+        usb.cntr
+            .modify(|_, w| w.lpmode().clear_bit().fsusp().clear_bit().resume().set_bit());
+        cortex_m::asm::delay(240_000); // ~5 ms at 48 MHz
+        usb.cntr.modify(|_, w| w.resume().clear_bit());
+        true
     }
 
     /// Returns (just_suspended, just_resumed) and clears the latches.

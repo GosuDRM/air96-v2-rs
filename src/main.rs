@@ -944,8 +944,14 @@ fn main() -> ! {
             rgb_sdb1.set_high();
             rgb_sdb2.set_high();
             dev.rgb.enabled = true;
-            dev.proto.build_link_cmd(wireless::uart::CMD_HAND);
-            flush(&mut dev.proto);
+            if dev.proto.link_mode == LinkMode::Usb {
+                // PC asleep + keypress → ask the host to resume (USB remote wakeup).
+                // No-op unless the bus is suspended and the host enabled it.
+                usb_hid.remote_wakeup();
+            } else {
+                dev.proto.build_link_cmd(wireless::uart::CMD_HAND);
+                flush(&mut dev.proto);
+            }
         }
 
         for ev in &events {
@@ -990,6 +996,15 @@ fn main() -> ! {
             dev.rgb.num_lock = false;
             dev.rgb.set_all(0, 0, 0);
         } else if just_resumed && usb_active_link {
+            // Host-driven wake (no recent keypress): drop any key state left
+            // stale across suspend so a key held when the PC slept can't linger
+            // as a phantom report. Mirrors C, which runs m_break_all_key only on
+            // !key_wake (no_act_time >= 10) — a key-driven wake keeps its press
+            // so the key that woke the host still registers.
+            if dev.sleep.no_act_time >= 10 {
+                dev.break_all_keys();
+                usb_hid.release_all();
+            }
             // Repaint on wake: animated modes refill on the next tick_animation,
             // but mode 0 (solid) only renders via set_hsv, so restore it
             // explicitly or it stays dark after the suspend-time zeroing.
@@ -1119,6 +1134,10 @@ fn main() -> ! {
                 let usb_suspended = usb_hid.is_suspended();
                 let prev_wakeup = dev.sleep.f_wakeup_prepare;
 
+                // Keep the sleep manager's copy of the user toggle in sync — the
+                // RF-connected idle-sleep check reads it. Without this the toggle
+                // (Fn+ScrLk / KC_SLEEP_MODE) never actually disabled sleep.
+                dev.sleep.sleep_enabled = dev.sleep_enabled;
                 dev.sleep.tick(&mut dev.proto, usb_suspended);
 
                 if !prev_wakeup && dev.sleep.f_wakeup_prepare {

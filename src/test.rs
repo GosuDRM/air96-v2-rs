@@ -318,8 +318,30 @@ use crate::config::eeprom;
 }
 #[test] fn sleep_goto_sleep_sets_wakeup() {
     let mut s = sleep::SleepManager::new(); s.f_goto_sleep = true;
-    s.tick(&mut UartProtocol::new(), false);
+    // Wireless link so the USB-active guard doesn't reject the sleep.
+    let mut p = UartProtocol::new(); p.link_mode = LinkMode::Bt1;
+    s.tick(&mut p, false);
     assert!(!s.f_goto_sleep); assert!(s.f_wakeup_prepare);
+}
+#[test] fn sleep_usb_active_rejects_goto_sleep() {
+    // USB link + host NOT suspended → reject sleep, do NOT power down.
+    let mut s = sleep::SleepManager::new(); s.f_goto_sleep = true;
+    s.tick(&mut UartProtocol::new(), false); // default link_mode = Usb
+    assert!(!s.f_goto_sleep); assert!(!s.f_wakeup_prepare);
+}
+#[test] fn sleep_disabled_blocks_connected_idle_sleep() {
+    // Connected + idle past threshold but sleep disabled → no sleep request.
+    let mut s = sleep::SleepManager::new(); s.sleep_enabled = false;
+    s.no_act_time = sleep::SLEEP_TIME_DELAY;
+    let mut p = UartProtocol::new(); p.link_mode = LinkMode::Bt1; p.rf_state = RfState::Connect;
+    s.tick(&mut p, false);
+    assert!(!s.f_goto_sleep);
+    // Same state with sleep enabled MUST request sleep.
+    let mut s2 = sleep::SleepManager::new(); s2.sleep_enabled = true;
+    s2.no_act_time = sleep::SLEEP_TIME_DELAY;
+    let mut p2 = UartProtocol::new(); p2.link_mode = LinkMode::Bt1; p2.rf_state = RfState::Connect;
+    s2.tick(&mut p2, false);
+    assert!(s2.f_goto_sleep);
 }
 #[test] fn sleep_wakeup_clears_on_activity() {
     let mut s = sleep::SleepManager::new(); s.f_wakeup_prepare = true; s.no_act_time = 5;
