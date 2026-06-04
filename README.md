@@ -33,6 +33,11 @@
 
 ## ✨ What's New
 
+### v4.7.2
+
+- 🪟 **Windows 11 USB fix** — the keyboard now enumerates reliably on Windows 11. The polled USB stack asserted the D+ pull-up ~200 ms before the main loop began polling (during the EEPROM load, dial scan and RF handshake), so the device couldn't answer the host's enumeration requests in time and Windows showed "USB device not recognized". USB is now brought up as the **last step before the polling loop**, so the pull-up asserts only once the bus can be serviced.
+- 🌑 **LEDs off at shutdown — hardware kill** — the USB-suspend edge now cuts the LED boost + driver-shutdown rails (`DC_BOOST`/`SDB1`/`SDB2`) directly, independent of the 1 s sleep debounce. *(Completes the v4.7.0 fix.)*
+
 ### v4.7.1
 
 - 😴 **Sleep/wake fixes** — the "disable sleep" toggle (Fn+ScrLk) works again, no more spurious sleep while on USB, and a **keypress now wakes a sleeping PC** (USB remote wakeup). Found via a full sleep/wake diff against the C reference.

@@ -1,5 +1,19 @@
 # Changelog
 
+## v4.7.2 (2026-06-05)
+
+Windows 11 USB enumeration fix + hardware LED-off at shutdown.
+
+### Fixed
+
+- **Windows 11 "USB device not recognized"** — the polled USB stack asserts the D+ pull-up the moment `UsbHid::new()` builds the device (`stm32-usbd` sets `BCDR.DPPU` inside `UsbBus::enable()`, called from `UsbDeviceBuilder::build()`), which tells the host to enumerate. But USB was brought up ~200 ms before the polling loop — ahead of the 100 ms settle delay, EEPROM load, dial scan and the RF handshake (`CMD_HAND`/`CMD_SET_NAME`/`CMD_SET_LINK` with 5 ms gaps), none of which call `usb_hid.poll()`. The device was deaf to the host's `GET_DESCRIPTOR`/`SET_ADDRESS` control transfers for that whole window, so Windows 11 — the least patient host during enumeration — exhausted its retries and declared the device unrecognised, while Linux/macOS retried long enough to catch the loop once it finally polled. Moved USB init to the last statement before the main loop so the pull-up asserts only once continuous polling begins; the unpolled window drops to ~0. The RF handshake now supplies the pre-pull-up settle, so the old 100 ms `asm::delay` is removed.
+- **LEDs stayed lit after PC shutdown** — the v4.7.0 render gate zeroes the PWM *buffer* but never cuts LED *power*. The rail power-down only happened via the 1 s USB-suspend debounce, which resets on any suspend flicker — and a board that fails to enumerate (above) never gets a clean, stable suspend, so `is_suspended()` never latched for a full second and `DC_BOOST`/`SDB1`/`SDB2` stayed powered. The suspend edge now cuts those three rails immediately (hardware kill, mirroring C `Sleep_Handle`'s `writePinLow`) and the resume edge restores them when RGB is enabled — independent of the 1 s debounce. The sleep-handler power-down still runs afterward as the complementary NRF shutdown. Relies on the enumeration fix to deliver a stable suspend signal at shutdown.
+
+### Files
+
+- `src/main.rs` — USB init relocated to immediately before the main loop; LED-rail hardware kill on the USB-suspend edge + restore on resume
+- `Cargo.toml` / `src/usb_hid.rs` / `README.md` / `CHANGELOG.md` — bumped to 4.7.2
+
 ## v4.7.1 (2026-06-04)
 
 Sleep/wake audit — disable-sleep toggle, USB-active guard, and USB remote wakeup.

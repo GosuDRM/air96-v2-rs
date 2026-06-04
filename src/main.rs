@@ -806,24 +806,9 @@ fn main() -> ! {
     // Step 5: Wait 10ms for oscillator startup / chip wake-up
     { let mut c = 10; while c > 0 { while !tick_arrived() { cortex_m::asm::wfi(); } c -= 1; } }
 
-    // ── USB HID (wired mode) ────────────────────────────────────────
-    let (usb_pa11, usb_pa12) = cortex_m::interrupt::free(|cs| {
-        (gpioa.pa11.into_floating_input(cs), gpioa.pa12.into_floating_input(cs))
-    });
-    let usb_periph = stm32f0xx_hal::usb::Peripheral {
-        usb: dp.USB,
-        pin_dm: usb_pa11,
-        pin_dp: usb_pa12,
-    };
-    let usb_bus = stm32f0xx_hal::usb::UsbBus::new(usb_periph);
-    let mut usb_hid = UsbHid::new(&usb_bus);
-
-    // ── USB settle delay ───────────────────────────────────────────
-    // After DFU flash, the host may not re-enumerate immediately.
-    // Give the USB peripheral time to initialize before the main loop.
-    cortex_m::asm::delay(4_800_000); // ~100ms at 48MHz
-
     // ── Device state ─────────────────────────────────────────────────
+    // NB: USB is initialised LAST (just before the main loop) so the D+
+    // pull-up is asserted only once the bus can be poll()ed continuously.
     let mut dev = Device::new();
 
     // ── Load saved config from EEPROM ────────────────────────────────
@@ -908,6 +893,28 @@ fn main() -> ! {
         dev.proto.build_link_cmd(CMD_SET_LINK);
         uart_flush!(&dev.proto);
     }
+
+    // ── USB HID (wired mode) — initialised LAST, just before the loop ──
+    // Building the UsbDevice asserts the D+ pull-up (stm32-usbd sets DPPU in
+    // UsbBus::enable(), called from UsbDeviceBuilder::build()), which tells the
+    // host to begin enumeration. From that instant the bus must be poll()ed
+    // continuously or the host's control transfers (GET_DESCRIPTOR, SET_ADDRESS,
+    // SET_CONFIGURATION) time out. Previously USB came up ~200 ms earlier — before
+    // the EEPROM load, dial scan and RF handshake, none of which poll USB — so
+    // Windows 11 (far less patient than Linux/macOS during enumeration) exhausted
+    // its retries and showed "USB device not recognized". Asserting the pull-up
+    // here, one statement before the polling loop, shrinks the unpolled window to
+    // ~0 and yields a clean enumeration on every host.
+    let (usb_pa11, usb_pa12) = cortex_m::interrupt::free(|cs| {
+        (gpioa.pa11.into_floating_input(cs), gpioa.pa12.into_floating_input(cs))
+    });
+    let usb_periph = stm32f0xx_hal::usb::Peripheral {
+        usb: dp.USB,
+        pin_dm: usb_pa11,
+        pin_dp: usb_pa12,
+    };
+    let usb_bus = stm32f0xx_hal::usb::UsbBus::new(usb_periph);
+    let mut usb_hid = UsbHid::new(&usb_bus);
 
     // ── Main loop ────────────────────────────────────────────────────
     let mut t10: u32 = 0;
@@ -995,6 +1002,17 @@ fn main() -> ! {
             dev.rgb.caps_lock = false;
             dev.rgb.num_lock = false;
             dev.rgb.set_all(0, 0, 0);
+            // Hardware LED kill at PC shutdown/suspend: cut the LED boost converter
+            // and both IS31FL3733 SDB (shutdown) rails so the LEDs are physically
+            // dark, not merely rendered black. Mirrors C Sleep_Handle's
+            // writePinLow(DC_BOOST/SDB1/SDB2), but on the suspend edge instead of
+            // after its 1 s debounce — so the board goes dark immediately and stays
+            // dark even if the bus never holds suspend long enough (1 s) for the
+            // sleep handler to fire. The 1 s sleep path still runs afterwards as the
+            // complementary NRF power-down (CMD_SLEEP/CMD_SET_CONFIG).
+            dc_boost.set_low();
+            rgb_sdb1.set_low();
+            rgb_sdb2.set_low();
         } else if just_resumed && usb_active_link {
             // Host-driven wake (no recent keypress): drop any key state left
             // stale across suspend so a key held when the PC slept can't linger
@@ -1004,6 +1022,15 @@ fn main() -> ! {
             if dev.sleep.no_act_time >= 10 {
                 dev.break_all_keys();
                 usb_hid.release_all();
+            }
+            // Power the LED rails back up (cut on the suspend edge above) so the
+            // repaint below is visible. Skip when RGB is user-disabled — its rails
+            // are meant to stay down. If the 1 s sleep handler already ran and
+            // cleared rgb.enabled, its own wakeup path (below) restores the rails.
+            if dev.rgb.enabled {
+                dc_boost.set_high();
+                rgb_sdb1.set_high();
+                rgb_sdb2.set_high();
             }
             // Repaint on wake: animated modes refill on the next tick_animation,
             // but mode 0 (solid) only renders via set_hsv, so restore it
