@@ -1,5 +1,41 @@
 # Changelog
 
+## v4.7.7 (2026-06-06)
+
+RGB-matrix animation parity with the C/QMK firmware — speed, brightness, colour math, mode IDs, and per-effect behaviour now match.
+
+> **Upgrading resets RGB/side settings once.** The EEPROM magic is bumped (0xA8 → 0xA9): the mode renumber and corrected defaults make old saved configs invalid, so the keyboard re-initialises to the C-matching defaults on first boot. Re-pick your effect / side-light settings after flashing.
+
+### Fixed — global (every effect)
+
+- **Animations ran ~1.76× too fast.** Default speed was 223; C uses `RGB_MATRIX_DEFAULT_SPD` = `UINT8_MAX/2` = **127**.
+- **Too bright out of the box.** Default value was 223; C first-boot is `255 − RGB_MATRIX_VAL_STEP*2` = **151** (`ansi.c:683`).
+- **Brightness/speed keys stepped by 16; C uses 52** (`RGB_MATRIX_VAL_STEP`/`SPD_STEP` from `keyboard.json`). `RGB_VAI/VAD/SPI/SPD` now step 52.
+- **HSV→RGB was a generic algorithm.** Rewrote `hsv_to_rgb` bit-for-bit to QMK `color.c` (`region = h*6/255`, `(h*2 − region*85)*3` remainder, `>>8` scaling, region-6 fold) — colours now match exactly, including the hue-boundary sectors that were visibly off.
+- **VIA selected the wrong effect.** The Rust dispatch used an alphabetical mode order while the shipped VIA definition (and C) use the QMK enum order. Re-numbered the dispatch to the QMK/VIA IDs (0 = Off, 1 = Solid, … 12 = Cycle Left/Right, … 40 = Solid MultiSplash); `RGB_MOD` now cycles in C order and wraps 40 → 1; default mode is 12.
+- **Reactive hit memory was 20; C `LED_HITS_TO_REMEMBER` = 8** — splash/reactive density now matches.
+
+### Fixed — per effect
+
+- **Splash / Solid Splash / Reactive Cross / Nexus / Wide** reacted to *all* remembered keys, making them identical to their `Multi…` twins. They now use only the most recent key (`effect_runner_reactive_splash` start = count−1).
+- **Dual Beacon, Rainbow Beacon, Rainbow Pinwheels** — `sin`/`cos` were swapped (C `effect_runner_sin_cos_i` passes `cos` into the `sin` slot), rotating/mirroring the pattern; also dropped a stray `+1` on the `speed/4` time factor.
+- **Breathing, Hue Breathing** (`speed/8`) and **Cycle Out/In** (`speed/2`) — removed a stray `+1` that made them drift at speed 0 and run slightly fast.
+- **Raindrops** — hue came from a hue-dependent sawtooth instead of C's shortest-path `((hue+180)%360 − hue)/4`.
+- **Typing Heatmap** — decay counted render frames (~400 ms) instead of milliseconds; now fades at C's 25 ms cadence.
+
+### Changed
+
+- The 9 QMK effects this keyboard never enabled (alpha_mods, flower_blooming, pixel_rain/flow/fractal, riverflow, starlight×3) are no longer selectable — they aren't in C or the VIA menu. Their render code remains but is unreachable.
+
+### Files
+
+- `src/led/rgb.rs` — `hsv_to_rgb` (QMK-exact), `HIT_BUFFER = 8`, `next_mode` (QMK step), C-matching `new()` defaults
+- `src/led/animation.rs` — dispatch re-ordered to QMK/VIA IDs, `compute_time_nobias` for the no-`+1` runners, splash single-hit, sin/cos un-swap, raindrops hue, heatmap ms decay
+- `src/main.rs` — VAL/SPD step 52, solid-mode checks (`== 1`), heatmap keypress (`== 27`), reset defaults
+- `src/config/eeprom.rs` — magic 0xA8 → 0xA9, C-matching defaults
+- `src/test.rs` — `eeprom_defaults` updated to the new defaults
+- `Cargo.toml` / `README.md` / `CHANGELOG.md` — bumped to 4.7.7
+
 ## v4.7.6 (2026-06-05)
 
 LEDs now actually turn off at PC shutdown — the v4.7.2 hardware-kill was self-reversing.

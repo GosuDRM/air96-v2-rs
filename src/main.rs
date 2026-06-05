@@ -278,22 +278,22 @@ impl Device {
             }
 
             // ── RGB matrix controls ────────────────────────────────────
-            keymap::KC_RGB_SPD => if pressed { self.rgb.speed = self.rgb.speed.saturating_sub(16); self.save_config(); },
-            keymap::KC_RGB_SPI => if pressed { self.rgb.speed = self.rgb.speed.saturating_add(16); self.save_config(); },
-            keymap::KC_RGB_VAI => if pressed { self.rgb.val = self.rgb.val.saturating_add(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } self.save_config(); },
-            keymap::KC_RGB_VAD => if pressed { self.rgb.val = self.rgb.val.saturating_sub(16); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } self.save_config(); },
+            keymap::KC_RGB_SPD => if pressed { self.rgb.speed = self.rgb.speed.saturating_sub(52); self.save_config(); }, // C RGB_MATRIX_SPD_STEP = 52
+            keymap::KC_RGB_SPI => if pressed { self.rgb.speed = self.rgb.speed.saturating_add(52); self.save_config(); },
+            keymap::KC_RGB_VAI => if pressed { self.rgb.val = self.rgb.val.saturating_add(52); if self.rgb.mode == 1 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } self.save_config(); }, // C RGB_MATRIX_VAL_STEP = 52
+            keymap::KC_RGB_VAD => if pressed { self.rgb.val = self.rgb.val.saturating_sub(52); if self.rgb.mode == 1 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } self.save_config(); },
             // 1:1 with C: RGB_MOD cycles to the next effect on press (BAT_SHOW now
             // owns fn+\, so the old tap-hold-for-battery behaviour is gone).
             keymap::KC_RGB_MOD => {
                 if pressed {
                     self.rgb.next_mode();
-                    if self.rgb.mode == 0 {
+                    if self.rgb.mode == 1 {
                         self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val);
                     }
                     self.save_config();
                 }
             }
-            keymap::KC_RGB_HUI => if pressed { self.rgb.hue = self.rgb.hue.wrapping_add(8); if self.rgb.mode == 0 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } self.save_config(); },
+            keymap::KC_RGB_HUI => if pressed { self.rgb.hue = self.rgb.hue.wrapping_add(8); if self.rgb.mode == 1 { self.rgb.set_hsv(self.rgb.hue, self.rgb.sat, self.rgb.val); } self.save_config(); },
 
             keymap::KC_MAC_TASK => {
                 if pressed {
@@ -482,7 +482,7 @@ impl Device {
             self.rgb.register_hit(led_idx, self.rgb.anim_tick);
 
             // Register keypress for typing heatmap frame buffer
-            if self.rgb.mode == 48 {
+            if self.rgb.mode == 27 {
                 led::animation::typing_heatmap_keypress(&mut self.rgb, row, col);
             }
 
@@ -838,7 +838,7 @@ fn main() -> ! {
         dev.rgb.val = cfg.rgb_val;
         dev.rgb.speed = cfg.rgb_speed;
         dev.rgb.enabled = cfg.rgb_enabled;
-        if dev.rgb.mode == 0 {
+        if dev.rgb.mode == 1 {
             dev.rgb.set_hsv(cfg.rgb_hue, cfg.rgb_sat, cfg.rgb_val);
         }
         if !dev.rgb.enabled {
@@ -976,7 +976,7 @@ fn main() -> ! {
             dev.rgb.enabled = true;
             // Repaint so a solid (mode 0) frame returns after the suspend-time
             // zeroing; animated modes refill on the next tick_animation.
-            if dev.rgb.mode == 0 {
+            if dev.rgb.mode == 1 {
                 dev.rgb.set_hsv(dev.rgb.hue, dev.rgb.sat, dev.rgb.val);
             } else {
                 dev.rgb.dirty1 = true;
@@ -1068,7 +1068,7 @@ fn main() -> ! {
                     rgb_sdb2.set_high();
                     // Repaint: animated modes refill on the next tick_animation,
                     // but mode 0 (solid) only renders via set_hsv.
-                    if dev.rgb.mode == 0 {
+                    if dev.rgb.mode == 1 {
                         dev.rgb.set_hsv(dev.rgb.hue, dev.rgb.sat, dev.rgb.val);
                     } else {
                         dev.rgb.dirty1 = true;
@@ -1227,7 +1227,7 @@ fn main() -> ! {
                     leds_killed = false;
                     // Repaint so a solid (mode 0) frame returns after the
                     // suspend-time zeroing; animated modes refill on next tick.
-                    if dev.rgb.mode == 0 {
+                    if dev.rgb.mode == 1 {
                         dev.rgb.set_hsv(dev.rgb.hue, dev.rgb.sat, dev.rgb.val);
                     } else {
                         dev.rgb.dirty1 = true;
@@ -1259,10 +1259,10 @@ fn main() -> ! {
                         dev.side.reset();
                         dev.rgb.enabled = true;
                         dev.rgb.hue = 255; dev.rgb.sat = 255;
-                        dev.rgb.val = 223;   // RGB_MATRIX_DEFAULT_VAL
-                        dev.rgb.speed = 223; // RGB_MATRIX_DEFAULT_SPD
-                        dev.rgb.mode = 4;    // CYCLE_LEFT_RIGHT
-                        dev.rgb.set_hsv(255, 255, 223);
+                        dev.rgb.val = 151;   // C first-boot: 255 − RGB_MATRIX_VAL_STEP*2
+                        dev.rgb.speed = 127; // RGB_MATRIX_DEFAULT_SPD = UINT8_MAX/2
+                        dev.rgb.mode = 12;   // CYCLE_LEFT_RIGHT (QMK enum)
+                        dev.rgb.set_hsv(255, 255, 151);
                         dev.f_bat_hold = false;
                         dev.active_layers = [0, 0, 0, 0]; dev.active_layer_count = 1;
                         if dev.proto.sys_sw_state == 0xA2 {

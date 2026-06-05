@@ -12,7 +12,7 @@
 #![allow(dead_code)]
 #![allow(unused_parens)]
 
-use super::rgb::{RgbMatrix, LED_COUNT, hsv_to_rgb};
+use super::rgb::{RgbMatrix, LED_COUNT, HIT_BUFFER, hsv_to_rgb};
 
 // ── Matrix dimensions (for framebuffer effects) ──────────────────────
 pub const MATRIX_ROWS: usize = 6;
@@ -278,6 +278,13 @@ fn compute_time_speed_div(anim_tick: u32, speed: u8) -> u8 {
     scale16by8(anim_tick as u16, speed.wrapping_div(2)) as u8
 }
 
+/// QMK runner time WITHOUT the `+1` bias — used by `effect_runner_dx_dy`,
+/// `effect_runner_dx_dy_dist`, `effect_runner_sin_cos_i`, and the standalone
+/// breathing / hue_breathing effects: `scale16by8(g_rgb_timer, speed / divisor)`.
+fn compute_time_nobias(anim_tick: u32, speed: u8, divisor: u8) -> u8 {
+    scale16by8(anim_tick as u16, speed.wrapping_div(divisor)) as u8
+}
+
 // ── Runners (inlined into each animation for simplicity) ─────────────
 
 /// Effect runner i: iterates LEDs, calls fn(hsv, i, time) -> hsv
@@ -340,13 +347,13 @@ fn runner_sin_cos_i(rgb: &mut RgbMatrix, effect: fn(i8, i8, u8, u8) -> u8) {
 /// Reactive runner: uses hit_tracker to find recent key hits
 fn runner_reactive(rgb: &mut RgbMatrix, effect: fn(u16) -> (u8, u8)) {
     let max_tick = 65535u32 / qadd8(rgb.speed, 1) as u32;
-    let search_count = core::cmp::min(rgb.hit_count as usize, 20);
+    let search_count = core::cmp::min(rgb.hit_count as usize, HIT_BUFFER);
     for i in 0..LED_COUNT {
         let mut tick = max_tick;
         let current = rgb.anim_tick;
         // Reverse search for most recent hit at this LED (ring-buffer aware)
         for k in 0..search_count {
-            let j = ((rgb.hit_count as usize) - 1 - k) % 20;
+            let j = ((rgb.hit_count as usize) - 1 - k) % HIT_BUFFER;
             if rgb.hit_index[j] == i as u8 {
                 let e = current.wrapping_sub(rgb.hit_tick[j]);
                 if e < tick { tick = e; }
@@ -362,7 +369,7 @@ fn runner_reactive(rgb: &mut RgbMatrix, effect: fn(u16) -> (u8, u8)) {
 
 /// Reactive splash runner: uses spatial distance from hit positions
 fn runner_reactive_splash(rgb: &mut RgbMatrix, start: u8, effect: fn(i16, i16, u8, u16) -> (u8, u8)) {
-    let count = core::cmp::min(rgb.hit_count as usize, 20);
+    let count = core::cmp::min(rgb.hit_count as usize, HIT_BUFFER);
     let current = rgb.anim_tick;
     let search_start = core::cmp::min(start as usize, count);
     for i in 0..LED_COUNT {
@@ -370,7 +377,7 @@ fn runner_reactive_splash(rgb: &mut RgbMatrix, start: u8, effect: fn(i16, i16, u
         let mut hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
         for k in search_start..count {
-            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let j = ((rgb.hit_count as usize) - count + k) % HIT_BUFFER;
             let hx = rgb.hit_x[j] as i16;
             let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
@@ -395,7 +402,7 @@ pub fn render_breathing(rgb: &mut RgbMatrix) {
     let hsv_h = rgb.hue;
     let hsv_s = rgb.sat;
     let hsv_v_base = rgb.val;
-    let time = compute_time(rgb.anim_tick, rgb.speed, 8);
+    let time = compute_time_nobias(rgb.anim_tick, rgb.speed, 8); // C breathing: speed/8, no +1
     let raw = sin8(time);
     let diff: i8 = (raw as i16 - 128i16) as i8;
     let v_scaled = abs8(diff).wrapping_mul(2);
@@ -439,7 +446,7 @@ pub fn render_cycle_left_right(rgb: &mut RgbMatrix) {
 
 // ── Mode 5: CYCLE_OUT_IN ────────────────────────────────────────────
 pub fn render_cycle_out_in(rgb: &mut RgbMatrix) {
-    let time = compute_time(rgb.anim_tick, rgb.speed, 2);
+    let time = compute_time_nobias(rgb.anim_tick, rgb.speed, 2); // C dx_dy_dist runner: speed/2, no +1
     let sat = rgb.sat;
     let val = rgb.val;
     for i in 0..LED_COUNT {
@@ -730,7 +737,7 @@ pub fn render_digital_rain(rgb: &mut RgbMatrix) {
 
 // ── Mode 20: DUAL_BEACON ────────────────────────────────────────────
 pub fn render_dual_beacon(rgb: &mut RgbMatrix) {
-    let time = compute_time(rgb.anim_tick, rgb.speed, 4);
+    let time = compute_time_nobias(rgb.anim_tick, rgb.speed, 4); // C sin_cos_i runner: speed/4, no +1
     let cos_val: i8 = (cos8(time) as i16 - 128) as i8;
     let sin_val: i8 = (sin8(time) as i16 - 128) as i8;
     let sat = rgb.sat;
@@ -739,7 +746,8 @@ pub fn render_dual_beacon(rgb: &mut RgbMatrix) {
         let (px, py) = LED_POSITIONS[i];
         let dx = (px as i16) - (CENTER_X as i16);
         let dy = (py as i16) - (CENTER_Y as i16);
-        let delta = ((dy * cos_val as i16 + dx * sin_val as i16) / 128) as i8;
+        // C effect_runner_sin_cos_i passes cos_value into the `sin` param: dy·sin + dx·cos.
+        let delta = ((dy * sin_val as i16 + dx * cos_val as i16) / 128) as i8;
         let hue = (rgb.hue as i16 + delta as i16) as u8;
         let (r, g, b) = hsv_to_rgb(hue, sat, val);
         rgb.set_color(i, r, g, b);
@@ -772,7 +780,7 @@ pub fn render_flower_blooming(rgb: &mut RgbMatrix) {
 // ── Mode 22: HUE_BREATHING ──────────────────────────────────────────
 pub fn render_hue_breathing(rgb: &mut RgbMatrix) {
     let huedelta: u8 = 12;
-    let time = compute_time(rgb.anim_tick, rgb.speed, 8);
+    let time = compute_time_nobias(rgb.anim_tick, rgb.speed, 8); // C hue_breathing: speed/8, no +1
     let raw = sin8(time);
     let diff: i8 = (raw as i16 - 128i16) as i8;
     let hue = rgb.hue.wrapping_add(scale8(abs8(diff).wrapping_mul(2), huedelta));
@@ -921,7 +929,7 @@ pub fn render_pixel_rain(rgb: &mut RgbMatrix) {
 
 // ── Mode 29: RAINBOW_BEACON ─────────────────────────────────────────
 pub fn render_rainbow_beacon(rgb: &mut RgbMatrix) {
-    let time = compute_time(rgb.anim_tick, rgb.speed, 4);
+    let time = compute_time_nobias(rgb.anim_tick, rgb.speed, 4); // C sin_cos_i runner: speed/4, no +1
     let cos_v: i8 = (cos8(time) as i16 - 128) as i8;
     let sin_v: i8 = (sin8(time) as i16 - 128) as i8;
     let sat = rgb.sat;
@@ -930,7 +938,7 @@ pub fn render_rainbow_beacon(rgb: &mut RgbMatrix) {
         let (px, py) = LED_POSITIONS[i];
         let dx = (px as i16) - (CENTER_X as i16);
         let dy = (py as i16) - (CENTER_Y as i16);
-        let delta = ((dy * 2 * cos_v as i16 + dx * 2 * sin_v as i16) / 128) as i8;
+        let delta = ((dy * 2 * sin_v as i16 + dx * 2 * cos_v as i16) / 128) as i8;
         let hue = (rgb.hue as i16 + delta as i16) as u8;
         let (r, g, b) = hsv_to_rgb(hue, sat, val);
         rgb.set_color(i, r, g, b);
@@ -939,7 +947,7 @@ pub fn render_rainbow_beacon(rgb: &mut RgbMatrix) {
 
 // ── Mode 30: RAINBOW_PINWHEELS ──────────────────────────────────────
 pub fn render_rainbow_pinwheels(rgb: &mut RgbMatrix) {
-    let time = compute_time(rgb.anim_tick, rgb.speed, 4);
+    let time = compute_time_nobias(rgb.anim_tick, rgb.speed, 4); // C sin_cos_i runner: speed/4, no +1
     let cos_v: i8 = (cos8(time) as i16 - 128) as i8;
     let sin_v: i8 = (sin8(time) as i16 - 128) as i8;
     let sat = rgb.sat;
@@ -948,7 +956,7 @@ pub fn render_rainbow_pinwheels(rgb: &mut RgbMatrix) {
         let (px, py) = LED_POSITIONS[i];
         let dy = (py as i16) - (CENTER_Y as i16);
         let dx_abs = px.abs_diff(CENTER_X);
-        let delta = ((dy * 3 * cos_v as i16 + (56 - dx_abs as i16) * 3 * sin_v as i16) / 128) as i8;
+        let delta = ((dy * 3 * sin_v as i16 + (56 - dx_abs as i16) * 3 * cos_v as i16) / 128) as i8;
         let hue = (rgb.hue as i16 + delta as i16) as u8;
         let (r, g, b) = hsv_to_rgb(hue, sat, val);
         rgb.set_color(i, r, g, b);
@@ -960,8 +968,11 @@ pub fn render_raindrops(rgb: &mut RgbMatrix) {
     let scaled = scale16by8(rgb.anim_tick as u16, qadd8(rgb.speed, 16));
     if scaled.is_multiple_of(10) {
         let idx = random8_max(LED_COUNT as u8) as usize;
-        let delta_h: i8 = ((rgb.hue.wrapping_add(180).wrapping_mul(4)) as i16 / 4) as i8;
-        let h = rgb.hue.wrapping_add((delta_h * (random8() as i8 & 0x03)) as u8);
+        // C raindrops: deltaH = ((hue+180)%360 − hue)/4, wrapped to ±127 (shortest path).
+        let hue = rgb.hue as i16;
+        let mut delta_h: i16 = (((hue + 180) % 360) - hue) / 4;
+        if delta_h > 127 { delta_h -= 256; } else if delta_h < -127 { delta_h += 256; }
+        let h = (hue + delta_h * ((random8() & 0x03) as i16)) as u8;
         let (r, g, b) = hsv_to_rgb(h, rgb.sat, rgb.val);
         rgb.set_color(idx, r, g, b);
     }
@@ -986,11 +997,11 @@ pub fn render_solid_reactive(rgb: &mut RgbMatrix) {
     let max_tick = 65535u32 / qadd8(rgb.speed, 1) as u32;
     let sat = rgb.sat;
     let current = rgb.anim_tick;
-    let search_count = core::cmp::min(rgb.hit_count as usize, 20);
+    let search_count = core::cmp::min(rgb.hit_count as usize, HIT_BUFFER);
     for i in 0..LED_COUNT {
         let mut tick = max_tick;
         for k in 0..search_count {
-            let j = ((rgb.hit_count as usize) - 1 - k) % 20;
+            let j = ((rgb.hit_count as usize) - 1 - k) % HIT_BUFFER;
             if rgb.hit_index[j] == i as u8 {
                 let e = current.wrapping_sub(rgb.hit_tick[j]);
                 if e < tick { tick = e; }
@@ -1010,11 +1021,11 @@ pub fn render_solid_reactive_simple(rgb: &mut RgbMatrix) {
     let max_tick = 65535u32 / qadd8(rgb.speed, 1) as u32;
     let sat = rgb.sat;
     let current = rgb.anim_tick;
-    let search_count = core::cmp::min(rgb.hit_count as usize, 20);
+    let search_count = core::cmp::min(rgb.hit_count as usize, HIT_BUFFER);
     for i in 0..LED_COUNT {
         let mut tick = max_tick;
         for k in 0..search_count {
-            let j = ((rgb.hit_count as usize) - 1 - k) % 20;
+            let j = ((rgb.hit_count as usize) - 1 - k) % HIT_BUFFER;
             if rgb.hit_index[j] == i as u8 {
                 let e = current.wrapping_sub(rgb.hit_tick[j]);
                 if e < tick { tick = e; }
@@ -1030,14 +1041,16 @@ pub fn render_solid_reactive_simple(rgb: &mut RgbMatrix) {
 
 // ── Mode 35: SPLASH ─────────────────────────────────────────────────
 pub fn render_splash(rgb: &mut RgbMatrix) {
-    let count = core::cmp::min(rgb.hit_count as usize, 20);
+    // C SPLASH: most-recent hit only (effect_runner_reactive_splash, start = count-1).
+    let count = core::cmp::min(rgb.hit_count as usize, HIT_BUFFER);
     let current = rgb.anim_tick;
+    let start = count.saturating_sub(1);
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let mut hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
-        for k in 0..count {
-            let j = ((rgb.hit_count as usize) - count + k) % 20;
+        for k in start..count {
+            let j = ((rgb.hit_count as usize) - count + k) % HIT_BUFFER;
             let hx = rgb.hit_x[j] as i16;
             let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
@@ -1058,14 +1071,14 @@ pub fn render_splash(rgb: &mut RgbMatrix) {
 
 // ── Mode 36: MULTISPLASH ────────────────────────────────────────────
 pub fn render_multisplash(rgb: &mut RgbMatrix) {
-    let count = core::cmp::min(rgb.hit_count as usize, 20);
+    let count = core::cmp::min(rgb.hit_count as usize, HIT_BUFFER);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let mut hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
         for k in 0..count {
-            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let j = ((rgb.hit_count as usize) - count + k) % HIT_BUFFER;
             let hx = rgb.hit_x[j] as i16;
             let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
@@ -1086,13 +1099,15 @@ pub fn render_multisplash(rgb: &mut RgbMatrix) {
 
 // ── Mode 37: SOLID_SPLASH ───────────────────────────────────────────
 pub fn render_solid_splash(rgb: &mut RgbMatrix) {
-    let count = core::cmp::min(rgb.hit_count as usize, 20);
+    // C SOLID_SPLASH: most-recent hit only (start = count-1).
+    let count = core::cmp::min(rgb.hit_count as usize, HIT_BUFFER);
     let current = rgb.anim_tick;
+    let start = count.saturating_sub(1);
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let mut hsv_v: u8 = 0;
-        for k in 0..count {
-            let j = ((rgb.hit_count as usize) - count + k) % 20;
+        for k in start..count {
+            let j = ((rgb.hit_count as usize) - count + k) % HIT_BUFFER;
             let hx = rgb.hit_x[j] as i16;
             let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
@@ -1112,13 +1127,13 @@ pub fn render_solid_splash(rgb: &mut RgbMatrix) {
 
 // ── Mode 38: SOLID_MULTISPLASH ──────────────────────────────────────
 pub fn render_solid_multisplash(rgb: &mut RgbMatrix) {
-    let count = core::cmp::min(rgb.hit_count as usize, 20);
+    let count = core::cmp::min(rgb.hit_count as usize, HIT_BUFFER);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let mut hsv_v: u8 = 0;
         for k in 0..count {
-            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let j = ((rgb.hit_count as usize) - count + k) % HIT_BUFFER;
             let hx = rgb.hit_x[j] as i16;
             let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
@@ -1149,14 +1164,16 @@ pub fn fn_solid_reactive_cross_math(dx: i16, dy: i16, dist: u8, tick: u16) -> (u
 }
 
 pub fn render_solid_reactive_cross(rgb: &mut RgbMatrix) {
-    let count = core::cmp::min(rgb.hit_count as usize, 20);
+    // C SOLID_REACTIVE_CROSS: most-recent hit only (start = count-1).
+    let count = core::cmp::min(rgb.hit_count as usize, HIT_BUFFER);
     let current = rgb.anim_tick;
+    let start = count.saturating_sub(1);
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
-        for k in 0..count {
-            let j = ((rgb.hit_count as usize) - count + k) % 20;
+        for k in start..count {
+            let j = ((rgb.hit_count as usize) - count + k) % HIT_BUFFER;
             let hx = rgb.hit_x[j] as i16;
             let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
@@ -1175,14 +1192,14 @@ pub fn render_solid_reactive_cross(rgb: &mut RgbMatrix) {
 
 // ── Mode 40: SOLID_REACTIVE_MULTICROSS ──────────────────────────────
 pub fn render_solid_reactive_multicross(rgb: &mut RgbMatrix) {
-    let count = core::cmp::min(rgb.hit_count as usize, 20);
+    let count = core::cmp::min(rgb.hit_count as usize, HIT_BUFFER);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
         for k in 0..count {
-            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let j = ((rgb.hit_count as usize) - count + k) % HIT_BUFFER;
             let hx = rgb.hit_x[j] as i16;
             let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
@@ -1238,15 +1255,17 @@ pub fn render_solid_reactive_nexus(rgb: &mut RgbMatrix) {
 }
 // Simplified nexus re-do:
 pub fn render_solid_reactive_nexus_v2(rgb: &mut RgbMatrix) {
-    let count = core::cmp::min(rgb.hit_count as usize, 20);
+    // C SOLID_REACTIVE_NEXUS: most-recent hit only (start = count-1).
+    let count = core::cmp::min(rgb.hit_count as usize, HIT_BUFFER);
     let current = rgb.anim_tick;
+    let start = count.saturating_sub(1);
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let mut hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
         let mut any_hit = false;
-        for k in 0..count {
-            let j = ((rgb.hit_count as usize) - count + k) % 20;
+        for k in start..count {
+            let j = ((rgb.hit_count as usize) - count + k) % HIT_BUFFER;
             let hx = rgb.hit_x[j] as i16;
             let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
@@ -1273,7 +1292,7 @@ pub fn render_solid_reactive_nexus_v2(rgb: &mut RgbMatrix) {
 
 // ── Mode 42: SOLID_REACTIVE_MULTINEXUS ──────────────────────────────
 pub fn render_solid_reactive_multinexus(rgb: &mut RgbMatrix) {
-    let count = core::cmp::min(rgb.hit_count as usize, 20);
+    let count = core::cmp::min(rgb.hit_count as usize, HIT_BUFFER);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
@@ -1281,7 +1300,7 @@ pub fn render_solid_reactive_multinexus(rgb: &mut RgbMatrix) {
         let mut hsv_v: u8 = 0;
         let mut any_hit = false;
         for k in 0..count {
-            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let j = ((rgb.hit_count as usize) - count + k) % HIT_BUFFER;
             let hx = rgb.hit_x[j] as i16;
             let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
@@ -1308,14 +1327,16 @@ pub fn render_solid_reactive_multinexus(rgb: &mut RgbMatrix) {
 
 // ── Mode 43: SOLID_REACTIVE_WIDE ────────────────────────────────────
 pub fn render_solid_reactive_wide(rgb: &mut RgbMatrix) {
-    let count = core::cmp::min(rgb.hit_count as usize, 20);
+    // C SOLID_REACTIVE_WIDE: most-recent hit only (start = count-1).
+    let count = core::cmp::min(rgb.hit_count as usize, HIT_BUFFER);
     let current = rgb.anim_tick;
+    let start = count.saturating_sub(1);
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
-        for k in 0..count {
-            let j = ((rgb.hit_count as usize) - count + k) % 20;
+        for k in start..count {
+            let j = ((rgb.hit_count as usize) - count + k) % HIT_BUFFER;
             let hx = rgb.hit_x[j] as i16;
             let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
@@ -1335,14 +1356,14 @@ pub fn render_solid_reactive_wide(rgb: &mut RgbMatrix) {
 
 // ── Mode 44: SOLID_REACTIVE_MULTIWIDE ───────────────────────────────
 pub fn render_solid_reactive_multiwide(rgb: &mut RgbMatrix) {
-    let count = core::cmp::min(rgb.hit_count as usize, 20);
+    let count = core::cmp::min(rgb.hit_count as usize, HIT_BUFFER);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
         for k in 0..count {
-            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let j = ((rgb.hit_count as usize) - count + k) % HIT_BUFFER;
             let hx = rgb.hit_x[j] as i16;
             let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
@@ -1409,6 +1430,9 @@ const HEATMAP_INCREASE_STEP: u8 = 32;
 const HEATMAP_DECREASE_DELAY_MS: u16 = 25;
 const HEATMAP_SPREAD: u8 = 40;
 const HEATMAP_AREA_LIMIT: u8 = 16;
+/// tick_animation() cadence (main.rs: rgb_anim_timer >= 16). Used to turn the
+/// frame-counted heatmap decay timer back into real milliseconds (C uses timer_elapsed).
+const RGB_RENDER_INTERVAL_MS: u16 = 16;
 
 /// Called when a key is pressed to update the heatmap frame buffer
 pub fn typing_heatmap_keypress(rgb: &mut RgbMatrix, row: u8, col: u8) {
@@ -1442,12 +1466,12 @@ pub fn typing_heatmap_keypress(rgb: &mut RgbMatrix, row: u8, col: u8) {
 }
 
 pub fn render_typing_heatmap(rgb: &mut RgbMatrix) {
-    // Decrease timer logic: decrease every HEATMAP_DECREASE_DELAY_MS ms
+    // Decrease every HEATMAP_DECREASE_DELAY_MS *milliseconds* (C uses timer_elapsed),
+    // not every frame: each render is RGB_RENDER_INTERVAL_MS apart.
+    rgb.heatmap_decrease_timer = rgb.heatmap_decrease_timer.wrapping_add(RGB_RENDER_INTERVAL_MS);
     if rgb.heatmap_decrease_timer >= HEATMAP_DECREASE_DELAY_MS {
         rgb.decrease_heatmap = true;
         rgb.heatmap_decrease_timer = 0;
-    } else {
-        rgb.heatmap_decrease_timer = rgb.heatmap_decrease_timer.wrapping_add(1);
     }
 
     for row in 0..MATRIX_ROWS {
@@ -1477,65 +1501,58 @@ pub fn render_solid_color(rgb: &mut RgbMatrix) {
     rgb.set_all(r, g, b);
 }
 
-// ── Total animation count (mode 0 = manual, 1-49 = animations) ──────
-pub const ANIMATION_COUNT: u8 = 50;
+// ── Total mode count: 0 = NONE (off), 1 = SOLID_COLOR, 2..40 = effects ──────
+// Matches the QMK rgb_matrix enum for this keyboard's enabled set (= VIA dropdown).
+pub const ANIMATION_COUNT: u8 = 41;
 
 /// Dispatch an animation tick to the current mode.
+/// Mode values ARE the QMK `rgb_matrix` enum / VIA effect-dropdown indices, in
+/// `rgb_matrix_effects.inc` order: 0 = NONE (off), 1 = SOLID_COLOR, 2..40 effects.
+/// (The 9 QMK effects this keyboard does not enable — alpha_mods, flower_blooming,
+/// pixel_*, riverflow, starlight* — are intentionally not selectable.)
 pub fn tick_animation(rgb: &mut RgbMatrix) {
-    if rgb.mode == 0 {
-        return; // Solid — manual set_hsv controls color
-    }
-
     match rgb.mode {
-        1 => render_breathing(rgb),
-        2 => render_cycle_all(rgb),
-        3 => render_cycle_up_down(rgb),
-        4 => render_cycle_left_right(rgb),
-        5 => render_cycle_out_in(rgb),
-        6 => render_gradient_up_down(rgb),
-        7 => render_gradient_left_right(rgb),
-        8 => render_rainbow_moving_chevron(rgb),
-        9 => render_alphas_mods(rgb),
-        10 => render_band_pinwheel_sat(rgb),
-        11 => render_band_pinwheel_val(rgb),
-        12 => render_band_sat(rgb),
-        13 => render_band_spiral_sat(rgb),
-        14 => render_band_spiral_val(rgb),
-        15 => render_band_val(rgb),
+        0 => rgb.set_all(0, 0, 0),               // RGB_MATRIX_NONE — all off
+        1 => render_solid_color(rgb),            // SOLID_COLOR
+        2 => render_gradient_up_down(rgb),
+        3 => render_gradient_left_right(rgb),
+        4 => render_breathing(rgb),
+        5 => render_band_sat(rgb),
+        6 => render_band_val(rgb),
+        7 => render_band_pinwheel_sat(rgb),
+        8 => render_band_pinwheel_val(rgb),
+        9 => render_band_spiral_sat(rgb),
+        10 => render_band_spiral_val(rgb),
+        11 => render_cycle_all(rgb),
+        12 => render_cycle_left_right(rgb),
+        13 => render_cycle_up_down(rgb),
+        14 => render_rainbow_moving_chevron(rgb),
+        15 => render_cycle_out_in(rgb),
         16 => render_cycle_out_in_dual(rgb),
         17 => render_cycle_pinwheel(rgb),
         18 => render_cycle_spiral(rgb),
-        19 => render_digital_rain(rgb),
-        20 => render_dual_beacon(rgb),
-        21 => render_flower_blooming(rgb),
-        22 => render_hue_breathing(rgb),
-        23 => render_hue_pendulum(rgb),
-        24 => render_hue_wave(rgb),
-        25 => render_jellybean_raindrops(rgb),
-        26 => render_pixel_flow(rgb),
-        27 => render_pixel_fractal(rgb),
-        28 => render_pixel_rain(rgb),
-        29 => render_rainbow_beacon(rgb),
-        30 => render_rainbow_pinwheels(rgb),
-        31 => render_raindrops(rgb),
-        32 => render_riverflow(rgb),
-        33 => render_solid_reactive(rgb),
-        34 => render_solid_reactive_simple(rgb),
-        35 => render_splash(rgb),
-        36 => render_multisplash(rgb),
-        37 => render_solid_splash(rgb),
-        38 => render_solid_multisplash(rgb),
-        39 => render_solid_reactive_cross(rgb),
-        40 => render_solid_reactive_multicross(rgb),
-        41 => render_solid_reactive_nexus_v2(rgb),
-        42 => render_solid_reactive_multinexus(rgb),
-        43 => render_solid_reactive_wide(rgb),
-        44 => render_solid_reactive_multiwide(rgb),
-        45 => render_starlight(rgb),
-        46 => render_starlight_dual_hue(rgb),
-        47 => render_starlight_dual_sat(rgb),
-        48 => render_typing_heatmap(rgb),
-        49 => render_solid_color(rgb),
-        _ => render_cycle_left_right(rgb), // fallback
+        19 => render_dual_beacon(rgb),
+        20 => render_rainbow_beacon(rgb),
+        21 => render_rainbow_pinwheels(rgb),
+        22 => render_raindrops(rgb),
+        23 => render_jellybean_raindrops(rgb),
+        24 => render_hue_breathing(rgb),
+        25 => render_hue_pendulum(rgb),
+        26 => render_hue_wave(rgb),
+        27 => render_typing_heatmap(rgb),
+        28 => render_digital_rain(rgb),
+        29 => render_solid_reactive_simple(rgb),
+        30 => render_solid_reactive(rgb),
+        31 => render_solid_reactive_wide(rgb),
+        32 => render_solid_reactive_multiwide(rgb),
+        33 => render_solid_reactive_cross(rgb),
+        34 => render_solid_reactive_multicross(rgb),
+        35 => render_solid_reactive_nexus_v2(rgb),
+        36 => render_solid_reactive_multinexus(rgb),
+        37 => render_splash(rgb),
+        38 => render_multisplash(rgb),
+        39 => render_solid_splash(rgb),
+        40 => render_solid_multisplash(rgb),
+        _ => {}
     }
 }

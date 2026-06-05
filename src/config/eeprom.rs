@@ -26,7 +26,10 @@ use stm32f0xx_hal::pac;
 const CONFIG_PAGE_ADDR: u32 = 0x0801_F800;
 const CONFIG_PAGE_SIZE: usize = 2048;
 const MAGIC_VALID_V1: u8 = 0xA5;
-const MAGIC_VALID_V4: u8 = 0xA8;
+// Bumped 0xA8 → 0xA9 in v4.7.7: the RGB mode renumber (now QMK/VIA IDs) and the
+// corrected speed/brightness defaults make old saved configs invalid, so force a
+// one-time clean re-init to the C-matching defaults.
+const MAGIC_VALID_V5: u8 = 0xA9;
 
 /// User config stored in flash
 #[derive(Debug, Clone, Copy)]
@@ -55,11 +58,11 @@ impl Default for UserConfig {
             side_colour: 0,
             side_rgb: true,
             sleep_enable: true,
-            rgb_mode: 4,     // CYCLE_LEFT_RIGHT — matches C reference default
-            rgb_hue: 255,   // RGB_MATRIX_DEFAULT_HUE
+            rgb_mode: 12,    // CYCLE_LEFT_RIGHT (QMK enum) — C RGB_MATRIX_DEFAULT_MODE
+            rgb_hue: 255,   // C first-boot rgb_matrix_sethsv(255, …) (ansi.c:683)
             rgb_sat: 255,   // RGB_MATRIX_DEFAULT_SAT
-            rgb_val: 223,   // RGB_MATRIX_DEFAULT_VAL (max - 1 step)
-            rgb_speed: 223, // RGB_MATRIX_DEFAULT_SPD (max - 1 step)
+            rgb_val: 151,   // C first-boot: 255 − RGB_MATRIX_VAL_STEP*2 = 255 − 104
+            rgb_speed: 127, // RGB_MATRIX_DEFAULT_SPD = UINT8_MAX/2
             rgb_enabled: true,
         }
     }
@@ -71,7 +74,7 @@ pub fn load() -> Option<UserConfig> {
     let addr = CONFIG_PAGE_ADDR as *const u8;
     unsafe {
         let magic = core::ptr::read_volatile(addr);
-        if magic == MAGIC_VALID_V4 {
+        if magic == MAGIC_VALID_V5 {
             let ptr = addr.add(1);
             Some(UserConfig {
                 side_mode:       core::ptr::read_volatile(ptr),
@@ -132,7 +135,7 @@ pub fn save(cfg: &UserConfig) {
             let ptr = CONFIG_PAGE_ADDR as *mut u16;
             
             // Halfword 0: magic (low) | side_mode (high)
-            let hw0 = MAGIC_VALID_V4 as u16 | ((cfg.side_mode as u16) << 8);
+            let hw0 = MAGIC_VALID_V5 as u16 | ((cfg.side_mode as u16) << 8);
             core::ptr::write_volatile(ptr, hw0);
             while flash.sr.read().bsy().bit() {}
 

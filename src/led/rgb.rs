@@ -10,6 +10,8 @@
 pub const DRIVER_ADDR_1: u8 = 0x50; // 0b1010000 — AD → GND
 pub const DRIVER_ADDR_2: u8 = 0x53; // 0b1010011 — AD → VCC
 pub const LED_COUNT: usize = 110;
+/// Reactive hit-tracker depth — QMK `LED_HITS_TO_REMEMBER` (rgb_matrix_types.h) = 8.
+pub const HIT_BUFFER: usize = 8;
 
 // IS31FL3733 registers (function page)
 const REG_SHUTDOWN: u8 = 0x0A;
@@ -186,10 +188,10 @@ pub struct RgbMatrix {
 
     // ── Reactive hit tracking (20-entry ring buffer) ──────────────
     pub hit_count: u8,
-    pub hit_index: [u8; 20],
-    pub hit_x: [u8; 20],
-    pub hit_y: [u8; 20],
-    pub hit_tick: [u32; 20],
+    pub hit_index: [u8; HIT_BUFFER],
+    pub hit_x: [u8; HIT_BUFFER],
+    pub hit_y: [u8; HIT_BUFFER],
+    pub hit_tick: [u32; HIT_BUFFER],
 
     // ── Framebuffer for matrix effects (digital_rain, typing_heatmap) ─
     pub frame_buffer: [[u8; 19]; 6],
@@ -230,19 +232,19 @@ impl RgbMatrix {
             buffer: [[0; 3]; LED_COUNT],
             dirty1: true,
             dirty2: true,
-            mode: 4,   // CYCLE_LEFT_RIGHT — matches C reference default
+            mode: 12,  // CYCLE_LEFT_RIGHT (QMK enum value) — C RGB_MATRIX_DEFAULT_MODE
             anim_tick: 0,
-            hue: 0,    // RGB_MATRIX_DEFAULT_HUE
+            hue: 255,  // C first-boot rgb_matrix_sethsv(255, …) (ansi.c:683)
             sat: 255,  // RGB_MATRIX_DEFAULT_SAT
-            val: 255,  // RGB_MATRIX_DEFAULT_VAL (= RGB_MATRIX_MAXIMUM_BRIGHTNESS)
-            speed: 255, // max speed (default)
+            val: 151,  // C first-boot: 255 − RGB_MATRIX_VAL_STEP*2 = 255 − 104
+            speed: 127, // RGB_MATRIX_DEFAULT_SPD = UINT8_MAX/2
             enabled: true,
             suspended: false,
             hit_count: 0,
-            hit_index: [0; 20],
-            hit_x: [0; 20],
-            hit_y: [0; 20],
-            hit_tick: [0; 20],
+            hit_index: [0; HIT_BUFFER],
+            hit_x: [0; HIT_BUFFER],
+            hit_y: [0; HIT_BUFFER],
+            hit_tick: [0; HIT_BUFFER],
             frame_buffer: [[0; 19]; 6],
             digital_rain_drop: 0,
             digital_rain_decay: 0,
@@ -302,7 +304,7 @@ impl RgbMatrix {
         if led_index == 0xFF { return; }
         let led = led_index as usize;
         if led < LED_COUNT {
-            let idx = self.hit_count as usize % 20;
+            let idx = self.hit_count as usize % HIT_BUFFER;
             self.hit_index[idx] = led_index;
             self.hit_x[idx] = super::animation::LED_POSITIONS[led].0;
             self.hit_y[idx] = super::animation::LED_POSITIONS[led].1;
@@ -318,9 +320,10 @@ impl RgbMatrix {
         animation::tick_animation(self);
     }
 
-    /// Cycle to next animation mode
+    /// Cycle to next animation mode.
+    /// Port of QMK rgb_matrix_step: advance, wrapping MAX-1 → 1 (skips NONE=0).
     pub fn next_mode(&mut self) {
-        self.mode = (self.mode + 1) % animation::ANIMATION_COUNT;
+        self.mode = if self.mode + 1 >= animation::ANIMATION_COUNT { 1 } else { self.mode + 1 };
         self.anim_tick = 0;
         // Reset reactive hit tracking when changing modes
         self.hit_count = 0;
@@ -367,16 +370,22 @@ impl RgbMatrix {
     }
 }
 
-/// HSV → RGB conversion (standard algorithm, port of QMK hsv_to_rgb)
+/// HSV → RGB conversion — exact port of QMK `hsv_to_rgb_impl` (quantum/color.c).
+/// Integer math is bit-for-bit: region = h*6/255, the (h*2 − region*85)*3 remainder,
+/// p/q/t scaled by `>>8` (÷256, NOT ÷255), and region 6 folded into case 0.
 pub fn hsv_to_rgb(h: u8, s: u8, v: u8) -> (u8, u8, u8) {
     if s == 0 { return (v, v, v); }
-    let region = (h as u16 * 6) / 256;
-    let remainder = ((h as u16 * 6) % 256) as u8;
-    let p = ((v as u16 * (255 - s as u16)) / 255) as u8;
-    let q = ((v as u16 * (255 - (s as u16 * remainder as u16 / 256))) / 255) as u8;
-    let t = ((v as u16 * (255 - (s as u16 * (255 - remainder as u16) / 256))) / 255) as u8;
+    let h = h as u16;
+    let s = s as u16;
+    let v = v as u16;
+    let region = (h * 6 / 255) as u8;
+    let remainder = ((h * 2).wrapping_sub(region as u16 * 85).wrapping_mul(3)) as u8;
+    let p = ((v * (255 - s)) >> 8) as u8;
+    let q = ((v * (255 - ((s * remainder as u16) >> 8))) >> 8) as u8;
+    let t = ((v * (255 - ((s * (255 - remainder as u16)) >> 8))) >> 8) as u8;
+    let v = v as u8;
     match region {
-        0 => (v, t, p),
+        0 | 6 => (v, t, p),
         1 => (q, v, p),
         2 => (p, v, t),
         3 => (p, q, v),
