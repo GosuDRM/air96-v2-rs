@@ -35,20 +35,27 @@
 
 ### v4.7.5
 
-- 🛠️ **Parity fixes from C↔Rust audit** — closes the v4.7.4-baseline gaps. VIA `EEPROM_RESET` now also resets the dynamic keymap (was user-config only); `DYNAMIC_KEYMAP_RESET` zeroes layers 5..7 (was `0xFFFF`); `SIDE_HUI` cycles back to rainbow after Lavender (was a 7-colour loop); Caps Lock side-LED is now cyan (was white); full-charge battery breath fires on a rising-edge latch (was racing the 5 s show-timeout); main RGB defaults are now `hue=255, val=223, speed=223` (was `0, 255, 255`); `render_multisplash` uses `min(count, 20)` + wraparound (matches the solid variants). See [CHANGELOG.md](CHANGELOG.md) for full per-file breakdown.
+- 🛠️ **Parity fixes from C↔Rust audit**
+  - VIA `EEPROM_RESET` also resets the dynamic keymap
+  - `DYNAMIC_KEYMAP_RESET` zeroes layers 5..7 (were `0xFFFF`)
+  - `SIDE_HUI` cycles back to rainbow after Lavender
+  - Caps Lock side-LED: white → cyan
+  - Full-charge battery breath: rising-edge latch
+  - RGB defaults: `hue=255, val=223, speed=223`
+  - `render_multisplash` uses `min(count, 20)` + wraparound
 
 ### v4.7.4
 
-- 🛠️ **Wired keyboard responds to keypresses again** — v4.7.3 regression fix. The boot-keyboard refactor left the keyboard interface IN-only, which forced the host to deliver lock-LED state via `SET_REPORT` on the control pipe. `usbd-hid` 0.6.2's `SET_REPORT` handler then panics on every LED update (`copy_from_slice` between a 128-byte buffer and a 1-byte slice), and the `wfe` panic handler silently halts the firmware — matrix scanning stops, no key responds. Restored the interrupt OUT endpoint so LED state lands on the OUT pipe (`pull_raw_output`) and the buggy SET_REPORT path is never hit. v4.7.3's BIOS-compatible boot keyboard (subclass/protocol `1`/`1`, `ForceBoot`, no Report ID, 8-byte report) is preserved unchanged.
+- 🛠️ **Wired keyboard responds to keypresses again** — restored the keyboard interrupt OUT endpoint so lock-LED state lands on `pull_raw_output` instead of triggering `usbd-hid` 0.6.2's panicking `SET_REPORT` path.
 
 ### v4.7.3
 
-- ⌨️ **Wired keyboard now works in BIOS / UEFI / bootloaders** — the USB keyboard is now a proper HID **boot keyboard** (`bInterfaceSubClass=1`, `bInterfaceProtocol=1`) sending the fixed 8-byte report with **no Report ID**, so it's recognised in the BIOS setup screen, boot menu, and disk-encryption prompts. Previously the interface advertised subclass/protocol `0/0` and prefixed every report with a Report ID byte (and defaulted to NKRO over USB), all of which pre-OS firmware can't read. VIA moved to its own RAW HID interface. **Wired is now 6KRO**; NKRO is unchanged over wireless.
+- ⌨️ **Wired keyboard works in BIOS / UEFI / bootloaders** — proper HID boot keyboard (subclass/protocol `1`/`1`, no Report ID, 8-byte 6KRO report). VIA moved to its own RAW HID interface.
 
 ### v4.7.2
 
-- 🪟 **Windows 11 USB fix** — the keyboard now enumerates reliably on Windows 11. The polled USB stack asserted the D+ pull-up ~200 ms before the main loop began polling (during the EEPROM load, dial scan and RF handshake), so the device couldn't answer the host's enumeration requests in time and Windows showed "USB device not recognized". USB is now brought up as the **last step before the polling loop**, so the pull-up asserts only once the bus can be serviced.
-- 🌑 **LEDs off at shutdown — hardware kill** — the USB-suspend edge now cuts the LED boost + driver-shutdown rails (`DC_BOOST`/`SDB1`/`SDB2`) directly, independent of the 1 s sleep debounce. *(Completes the v4.7.0 fix.)*
+- 🪟 **Windows 11 USB enumeration fix** — USB peripheral brought up as the last step before polling.
+- 🌑 **LEDs off at shutdown — hardware kill** — USB-suspend edge cuts `DC_BOOST` / `SDB1` / `SDB2`.
 
 [Full changelog →](CHANGELOG.md)
 
