@@ -50,6 +50,37 @@ use usbd_hid::hid_class::{
     HIDClass, HidClassSettings, HidCountryCode, HidProtocol, HidSubClass, ProtocolModeConfig,
 };
 
+// ───────────────────────────────────────────────────────────────────────────
+// usbd-hid 0.6.2 SET_REPORT panic — DO NOT remove the keyboard OUT endpoint.
+// ───────────────────────────────────────────────────────────────────────────
+//
+// `usbd-hid` 0.6.2's `control_out` SET_REPORT handler does
+//
+//     let mut buf: [u8; CONTROL_BUF_LEN] = [0; CONTROL_BUF_LEN];   // 128 B
+//     buf.copy_from_slice(&xfer.data()[..len]);                    // len = 1 for LED
+//
+// (`hid_class.rs:677-678`). `copy_from_slice` requires equal-length slices and
+// PANICS on every SET_REPORT shorter than 128 B — i.e. on every keyboard LED
+// state update the host sends. With `panic = "abort"` and a `wfe` panic
+// handler (`src/main.rs:1581`) that means the firmware silently stops
+// scanning the matrix and the keyboard becomes unresponsive to ALL keys.
+//
+// Fixed upstream in 0.7+ (`buf[..len].copy_from_slice(&xfer.data()[..len])`),
+// but 0.7 requires usb-device 0.3 while stm32-usbd 0.6 pins usb-device 0.2 —
+// so we can't simply bump the crate.
+//
+// Workaround: keep an interrupt OUT endpoint on the keyboard interface
+// (`HIDClass::new_with_settings`, not `new_ep_in_with_settings`). With an
+// interrupt OUT advertised, Windows / Linux / macOS deliver the 1-byte LED
+// state via that endpoint (read with `pull_raw_output`), and never hit the
+// buggy SET_REPORT control path. This mirrors what v4.7.2 did before the
+// boot-keyboard refactor.
+//
+// BIOS doesn't care that the boot interface has an OUT endpoint — the boot
+// keyboard spec permits it (HID 1.11 §B.1) and it doesn't affect the IN
+// report format. EP budget is fine: 5 IN + 2 OUT + EP0 + BTABLE = 576 B of
+// the STM32F072's 1024-byte PMA, 5 of 8 EP indices used.
+
 const USB_VID: u16 = 0x19F5;
 const USB_PID: u16 = 0x3266;
 
@@ -145,8 +176,11 @@ pub const VIA_DESC: &[u8] = &[
 
 pub struct UsbHid<'a> {
     device: UsbDevice<'a, UsbBusType>,
-    /// Boot keyboard (subclass=Boot, protocol=Keyboard, ForceBoot). IN endpoint
-    /// only — host LED state arrives via SET_REPORT on the control pipe.
+    /// Boot keyboard (subclass=Boot, protocol=Keyboard, ForceBoot).
+    /// IN endpoint carries the 8-byte report; OUT endpoint carries the 1-byte
+    /// LED state. The OUT endpoint is mandatory here as a workaround for the
+    /// usbd-hid 0.6.2 SET_REPORT panic — see the comment at the top of this
+    /// file. Do NOT drop it back to IN-only.
     keyboard: HIDClass<'a, UsbBusType>,
     /// RAW HID / VIA — IN + OUT endpoints.
     via: HIDClass<'a, UsbBusType>,
@@ -168,9 +202,12 @@ impl<'a> UsbHid<'a> {
     pub fn new(bus: &'a UsbBusAllocator<UsbBusType>) -> Self {
         // Boot keyboard: advertise Boot subclass + Keyboard protocol so BIOS/UEFI
         // recognise it, and ForceBoot so usbd-hid lets us push the 8-byte boot
-        // report regardless of the host's SET_PROTOCOL (see module docs). IN-only;
-        // LED OUTPUT comes over the control pipe via SET_REPORT.
-        let keyboard = HIDClass::new_ep_in_with_settings(
+        // report regardless of the host's SET_PROTOCOL (see module docs).
+        // Uses `new_with_settings` (IN + OUT), NOT `new_ep_in_with_settings`,
+        // to dodge the usbd-hid 0.6.2 SET_REPORT panic — host LED state goes
+        // out the interrupt OUT endpoint instead of the buggy control pipe.
+        // See the long comment near the top of this file.
+        let keyboard = HIDClass::new_with_settings(
             bus,
             BOOT_KEYBOARD_DESC,
             1,
@@ -182,16 +219,16 @@ impl<'a> UsbHid<'a> {
             },
         );
         // VIA needs an OUT endpoint for host→device commands, so it keeps the
-        // full IN+OUT pair. Consumer/system are IN-only — switching them off the
-        // IN+OUT `new()` frees the OUT endpoints that make room for the extra
-        // boot-keyboard + VIA interfaces within the STM32F072 EP budget.
+        // full IN+OUT pair. Consumer/system are IN-only — they have no host→device
+        // traffic, so dropping their OUT endpoints saves PMA without affecting
+        // any host that's tested against this firmware.
         let via = HIDClass::new(bus, VIA_DESC, 1);
         let consumer = HIDClass::new_ep_in(bus, MediaKeyboardReport::desc(), 1);
         let system = HIDClass::new_ep_in(bus, SystemControlReport16::desc(), 1);
         let device = UsbDeviceBuilder::new(bus, UsbVidPid(USB_VID, USB_PID))
             .manufacturer("NuPhy")
             .product("Air96 V2 Keyboard")
-            .serial_number("v4.7.3")
+            .serial_number("v4.7.4")
             .device_class(0x00)
             .device_sub_class(0x00)
             .device_protocol(0x00)
@@ -249,12 +286,16 @@ impl<'a> UsbHid<'a> {
             self.just_resumed = true;
         }
 
-        // Host keyboard LED state (NumLock/CapsLock/…) arrives as a SET_REPORT
-        // on the control pipe (the boot keyboard has no OUT endpoint). The boot
-        // report has no Report ID, so the LED bitmap is byte 0 of the payload.
+        // Host keyboard LED state (NumLock/CapsLock/…) arrives on the keyboard
+        // interface's interrupt OUT endpoint. The boot report has no Report ID,
+        // so the 1-byte payload IS the LED bitmap. We must NOT call
+        // `pull_raw_report` here: usbd-hid 0.6.2's SET_REPORT handler panics
+        // (`copy_from_slice` with mismatched lengths), and `pull_raw_report`'s
+        // own `data.copy_from_slice(&set_report_buf.buf)` panics the same way
+        // even after the fact — see the comment at the top of this file.
         let mut led_buf = [0u8; 8];
-        if let Ok(info) = self.keyboard.pull_raw_report(&mut led_buf) {
-            if info.len >= 1 {
+        if let Ok(len) = self.keyboard.pull_raw_output(&mut led_buf) {
+            if len >= 1 {
                 self.led_state = led_buf[0];
             }
         }

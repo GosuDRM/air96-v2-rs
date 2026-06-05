@@ -1,5 +1,18 @@
 # Changelog
 
+## v4.7.4 (2026-06-05)
+
+Wired keyboard responds to keypresses again — v4.7.3 regression fix.
+
+### Fixed
+
+- **Wired keyboard dead — no key responds after v4.7.3.** The boot-keyboard refactor switched the keyboard interface to IN-only (`HIDClass::new_ep_in_with_settings`), which forces the host to deliver lock-LED state (NumLock / CapsLock / …) via `SET_REPORT` on the control pipe instead of an interrupt OUT endpoint. `usbd-hid` 0.6.2's `SET_REPORT` handler then panics: `let mut buf: [u8; CONTROL_BUF_LEN] = [0; 128]; buf.copy_from_slice(&xfer.data()[..len])` — `copy_from_slice` requires equal-length slices, and `len` is `1` for a boot keyboard LED report (`hid_class.rs:677-678`). With `panic = "abort"` and a `wfe` panic handler, the firmware silently halts the moment the host sets initial LED state at enumeration (or on the first NumLock/CapsLock toggle): matrix scanning stops, USB polling stops, no key responds. Fixed upstream in usbd-hid 0.7+, but 0.7 requires usb-device 0.3 while `stm32-usbd` 0.6 pins usb-device 0.2, so the crate can't simply be bumped. Switched the keyboard interface back to IN+OUT (`HIDClass::new_with_settings`) — Windows / Linux / macOS deliver LED state on the OUT endpoint (`pull_raw_output`), bypassing the buggy SET_REPORT path entirely. This mirrors the v4.7.2 endpoint shape; the v4.7.3 boot subclass/protocol + ForceBoot + no-Report-ID descriptor (which fixed BIOS recognition) are preserved unchanged. Total endpoints: 5 IN + 2 OUT + EP0 — 576 B of the STM32F072's 1024-byte PMA, 5 of 8 EP indices used.
+
+### Files
+
+- `src/usb_hid.rs` — `keyboard` constructed via `new_with_settings` (IN+OUT, Boot/Keyboard/ForceBoot); LED state read via `pull_raw_output` instead of the panicking `pull_raw_report`; long header comment documenting the upstream bug so the OUT endpoint isn't accidentally dropped again
+- `Cargo.toml` / `src/usb_hid.rs` / `README.md` / `CHANGELOG.md` — bumped to 4.7.4
+
 ## v4.7.3 (2026-06-05)
 
 Wired keyboard now works in BIOS / UEFI / pre-OS — proper HID boot keyboard.

@@ -33,6 +33,10 @@
 
 ## ✨ What's New
 
+### v4.7.4
+
+- 🛠️ **Wired keyboard responds to keypresses again** — v4.7.3 regression fix. The boot-keyboard refactor left the keyboard interface IN-only, which forced the host to deliver lock-LED state via `SET_REPORT` on the control pipe. `usbd-hid` 0.6.2's `SET_REPORT` handler then panics on every LED update (`copy_from_slice` between a 128-byte buffer and a 1-byte slice), and the `wfe` panic handler silently halts the firmware — matrix scanning stops, no key responds. Restored the interrupt OUT endpoint so LED state lands on the OUT pipe (`pull_raw_output`) and the buggy SET_REPORT path is never hit. v4.7.3's BIOS-compatible boot keyboard (subclass/protocol `1`/`1`, `ForceBoot`, no Report ID, 8-byte report) is preserved unchanged.
+
 ### v4.7.3
 
 - ⌨️ **Wired keyboard now works in BIOS / UEFI / bootloaders** — the USB keyboard is now a proper HID **boot keyboard** (`bInterfaceSubClass=1`, `bInterfaceProtocol=1`) sending the fixed 8-byte report with **no Report ID**, so it's recognised in the BIOS setup screen, boot menu, and disk-encryption prompts. Previously the interface advertised subclass/protocol `0/0` and prefixed every report with a Report ID byte (and defaulted to NKRO over USB), all of which pre-OS firmware can't read. VIA moved to its own RAW HID interface. **Wired is now 6KRO**; NKRO is unchanged over wireless.
