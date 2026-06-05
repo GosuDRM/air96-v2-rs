@@ -222,7 +222,19 @@ impl Device {
                 if pressed { self.side.mode = (self.side.mode + 1) % 5; self.save_config(); }
             },
             keymap::KC_SIDE_HUI => {
-                if pressed { self.side.colour = (self.side.colour + 1) % 8; self.save_config(); }
+                if pressed {
+                    if self.side.rgb_enabled {
+                        self.side.rgb_enabled = false;
+                        self.side.colour = 0;
+                    } else {
+                        self.side.colour += 1;
+                        if self.side.colour >= 8 {
+                            self.side.rgb_enabled = true;
+                            self.side.colour = 0;
+                        }
+                    }
+                    self.save_config();
+                }
             },
             keymap::KC_SIDE_SPI => {
                 if pressed { self.side.speed = (self.side.speed + 1).min(4); self.save_config(); }
@@ -1206,11 +1218,11 @@ fn main() -> ! {
                         // Reset config (M15 fix: full device_reset_init)
                         dev.side.reset();
                         dev.rgb.enabled = true;
-                        dev.rgb.hue = 0; dev.rgb.sat = 255;
-                        dev.rgb.val = 255;   // RGB_MATRIX_DEFAULT_VAL
-                        dev.rgb.speed = 255; // max speed (default)
+                        dev.rgb.hue = 255; dev.rgb.sat = 255;
+                        dev.rgb.val = 223;   // RGB_MATRIX_DEFAULT_VAL
+                        dev.rgb.speed = 223; // RGB_MATRIX_DEFAULT_SPD
                         dev.rgb.mode = 4;    // CYCLE_LEFT_RIGHT
-                        dev.rgb.set_hsv(0, 255, 255);
+                        dev.rgb.set_hsv(255, 255, 223);
                         dev.f_bat_hold = false;
                         dev.active_layers = [0, 0, 0, 0]; dev.active_layer_count = 1;
                         if dev.proto.sys_sw_state == 0xA2 {

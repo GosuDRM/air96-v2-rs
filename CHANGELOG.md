@@ -1,5 +1,36 @@
 # Changelog
 
+## v4.7.5 (2026-06-05)
+
+Parity fixes from C↔Rust audit — closes the gaps the v4.7.4 baseline left open.
+
+### Fixed
+
+- **VIA `EEPROM_RESET` did not reset the dynamic keymap.** QMK's `eeconfig_init_via()` resets layout options *and* the dynamic keymap. Rust's `ID_EEPROM_RESET` handler only called `eeprom::reset_to_defaults()` — the keymap layer 0..8 stayed whatever the user had set. `ID_EEPROM_RESET` now also calls `via_dynamic_keymap_reset()`.
+- **VIA `DYNAMIC_KEYMAP_RESET` did not zero layers 5..7.** Rust's reset init'd the 2016-byte buffer to `0xFF` (uninitialised) and then wrote layers 0..4 from the static `LAYER_*` tables — leaving layers 5..7 as `0xFFFF`, which the read path treats as "use static keymap" (so users could see stale keys on those layers). Now initialised to `0x00` so layers 5..7 are `KC_NO` (matching QMK's `keycode_at_keymap_location_raw` for undefined layers).
+- **Side LED `SIDE_HUI` cycle never returned to rainbow.** Rust's handler did `(self.side.colour + 1) % 8`, so the cycle was Red→Orange→…→Lavender→Red with no rainbow state. C reference's `side_colour_control()` uses two variables: `side_rgb` (rainbow flag) and `side_colour` (palette 0..7). The cycle is 0..7 (colours) → 8 (rainbow) → 0 (red). Rust already had `rgb_enabled` as the `side_rgb` equivalent; the handler now increments `colour`, transitions to `rgb_enabled=true, colour=0` after 7, and resets back to `colour=0` on the next press.
+- **Caps Lock side-LED was white instead of cyan.** C reference's `sys_led_show()` writes `0x00, SIDE_BLINK_LIGHT, SIDE_BLINK_LIGHT` = `(0, 128, 128)` cyan when Caps Lock is on. Rust had `(0xFF, 0xFF, 0xFF)` white.
+- **Full-charge battery indicator never started the breath.** The 5-second `bat_show_time` timeout in `bat_led_show`'s "stable charge state" branch cleared `bat_show_flag` before the "charge == 0x03" branch could trigger the breath. C reference uses a `bat_full_shown` rising-edge latch and resets it on leaving `0x03` — same fix applied: a single breath-trigger fires when the charger first reports full, and stays latched until the device leaves full-charge.
+- **Main RGB defaults were eye-searing.** `UserConfig::default()` and the `KC_DEV_RESET` path used `hue=0, val=255, speed=255` — max brightness, fastest, no hue. Now `hue=255, val=223, speed=223` (a sensible "set and forget" baseline matching the C reference's `rgb_matrix_sethsv(255, 255, 255 - 52*2)` first-boot override, with one tick back from max for comfortable long-term use).
+
+### Changed
+
+- **`render_multisplash` OOB is now structurally impossible** (matches `render_solid_multisplash`). The old form iterated `for j in 0..count` with an in-loop `if j >= hit_index.len() { break; }` guard — defensive but noisy. The new form is `min(count, 20)` + a `(count - count + k) % 20` index, the same pattern the solid variants use, so the compiler can prove no OOB.
+
+### Skipped / No-op
+
+- **`SystemControlReport16` is `u16` on purpose** — QMK's `report_extra_t` is also 2 bytes (`uint16_t usage`); descriptor min/max range 0x81..0xB7 requires > 8 bits. Rust matches.
+- **Num Lock RGB LED 33→76** — C reference's `rgb_matrix_indicators_kb()` doesn't drive per-LED caps/num highlighting on the main matrix at all (it uses the side LEDs in `side.c:300`). Rust's index 33 for num lock is a Rust-only feature, not a port gap.
+
+### Files
+
+- `src/via.rs` — `ID_EEPROM_RESET` + `via_dynamic_keymap_reset()` init buffer with `0x00`
+- `src/main.rs` — `KC_SIDE_HUI` cycle, `KC_DEV_RESET` defaults
+- `src/config/eeprom.rs` — `UserConfig::default()` defaults
+- `src/led/side.rs` — Caps Lock color (white→cyan), `bat_led_show` rising-edge latch (`bat_full_shown`)
+- `src/led/animation.rs` — `render_multisplash` uses `min(count, 20)` + wraparound indexing
+- `Cargo.toml` / `README.md` / `CHANGELOG.md` — bumped to 4.7.5
+
 ## v4.7.4 (2026-06-05)
 
 Wired keyboard responds to keypresses again — v4.7.3 regression fix.

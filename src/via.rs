@@ -126,6 +126,7 @@ pub fn via_command(data: &mut [u8; 32], rgb: &mut RgbMatrix, save_pending: &mut 
         }
         ID_EEPROM_RESET => {
             crate::config::eeprom::reset_to_defaults();
+            via_dynamic_keymap_reset();
             true
         }
         ID_BOOTLOADER_JUMP => {
@@ -310,7 +311,10 @@ fn via_dynamic_keymap_set_buffer(data: &mut [u8; 32]) -> bool {
 
 fn via_dynamic_keymap_reset() {
     // Write the default keymap layers to EEPROM in a single page write.
-    let mut buf = [0xFFu8; 2016];
+    // Layers 5..7 (beyond the 5 defined in keymap.rs) get KC_NO (0x0000),
+    // matching QMK's `dynamic_keymap_reset()` which uses keycode_at_keymap_location_raw
+    // (returns 0 for undefined layers).
+    let mut buf = [0x00u8; 2016];
     let layers: [&[[u16; VIA_MATRIX_COLS]; VIA_MATRIX_ROWS]; 5] = [
         &crate::keyboard::keymap::LAYER_MAC,
         &crate::keyboard::keymap::LAYER_MAC_FN,
@@ -328,7 +332,7 @@ fn via_dynamic_keymap_reset() {
             }
         }
     }
-    // Layers 5..8 already 0x0000 (KC_NO) from the [0xFF; 2016] init.
+    // Layers 5..7 already 0x0000 (KC_NO) from the [0x00; 2016] init.
     crate::config::eeprom::save_keymap(&buf);
 }
 

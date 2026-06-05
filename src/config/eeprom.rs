@@ -56,10 +56,10 @@ impl Default for UserConfig {
             side_rgb: true,
             sleep_enable: true,
             rgb_mode: 4,     // CYCLE_LEFT_RIGHT — matches C reference default
-            rgb_hue: 0,     // RGB_MATRIX_DEFAULT_HUE
+            rgb_hue: 255,   // RGB_MATRIX_DEFAULT_HUE
             rgb_sat: 255,   // RGB_MATRIX_DEFAULT_SAT
-            rgb_val: 255,   // RGB_MATRIX_DEFAULT_VAL
-            rgb_speed: 255, // max speed (default)
+            rgb_val: 223,   // RGB_MATRIX_DEFAULT_VAL (max - 1 step)
+            rgb_speed: 223, // RGB_MATRIX_DEFAULT_SPD (max - 1 step)
             rgb_enabled: true,
         }
     }

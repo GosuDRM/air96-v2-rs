@@ -189,6 +189,11 @@ pub struct SideLeds {
     charge_state: u8,
     bat_percent: u8,
     bat_init: bool,
+    /// Rising-edge latch for the "charge reached 0x03 (full)" breath.
+    /// Set to true the first tick the firmware sees 0x03, reset on
+    /// leaving 0x03. Prevents the 5s show-timeout from clearing
+    /// `bat_show_flag` before the breath has had a chance to start.
+    bat_full_shown: bool,
 
     // RF link blink
     rf_blink_cnt: u8,
@@ -223,6 +228,7 @@ impl SideLeds {
             bat_show_flag: true, bat_show_breath: false, bat_play_timer: 0, bat_play_point: 0,
             bat_show_time: 0, bat_sts_debounce: 0, bat_per_debounce: 0,
             charge_state: 0, bat_percent: 100, bat_init: true,
+            bat_full_shown: false,
             rf_blink_cnt: 0, rf_blink_timer: 0, rf_link_show_time: 0,
             link_state_temp: 0xFF,
             sys_show_flag: false, sys_show_timer: 0,
@@ -416,9 +422,16 @@ impl SideLeds {
                 self.bat_show_flag = false;
                 self.bat_show_breath = false;
             }
-            // M13 fix: full charge (0x03) → breathing indicator
-            if self.charge_state == 0x03 {
+            // M13 fix: full charge (0x03) → breathing indicator.
+            // Latch so the 5s show-timeout above doesn't clear the flag
+            // before the breath has a chance to start. C reference: side.c:678-686.
+            if self.charge_state == 0x03 && !self.bat_full_shown {
                 self.bat_show_breath = true;
+                self.bat_show_flag = true;
+                self.bat_show_time = 0;
+                self.bat_full_shown = true;
+            } else if self.charge_state != 0x03 {
+                self.bat_full_shown = false;
             }
         }
 
@@ -539,10 +552,10 @@ impl SideLeds {
             if self.sleep_show_timer >= 3000 { self.sleep_show_flag = false; }
         }
 
-        // 4. Caps Lock indicator (left side, white glow when on)
+        // 4. Caps Lock indicator (left side, cyan glow when on)
         let caps_lock = (keyboard_leds & 0x02) != 0;
         if caps_lock || (proto.rf_led & 0x02) != 0 {
-            self.set_left(0xFF, 0xFF, 0xFF); // White
+            self.set_left(0x00, 0x80, 0x80); // Cyan (SIDE_BLINK_LIGHT, SIDE_BLINK_LIGHT)
         }
 
         // 4b. Num Lock indicator (right side, white glow when on)

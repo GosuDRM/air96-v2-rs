@@ -33,6 +33,10 @@
 
 ## ✨ What's New
 
+### v4.7.5
+
+- 🛠️ **Parity fixes from C↔Rust audit** — closes the v4.7.4-baseline gaps. VIA `EEPROM_RESET` now also resets the dynamic keymap (was user-config only); `DYNAMIC_KEYMAP_RESET` zeroes layers 5..7 (was `0xFFFF`); `SIDE_HUI` cycles back to rainbow after Lavender (was a 7-colour loop); Caps Lock side-LED is now cyan (was white); full-charge battery breath fires on a rising-edge latch (was racing the 5 s show-timeout); main RGB defaults are now `hue=255, val=223, speed=223` (was `0, 255, 255`); `render_multisplash` uses `min(count, 20)` + wraparound (matches the solid variants). See [CHANGELOG.md](CHANGELOG.md) for full per-file breakdown.
+
 ### v4.7.4
 
 - 🛠️ **Wired keyboard responds to keypresses again** — v4.7.3 regression fix. The boot-keyboard refactor left the keyboard interface IN-only, which forced the host to deliver lock-LED state via `SET_REPORT` on the control pipe. `usbd-hid` 0.6.2's `SET_REPORT` handler then panics on every LED update (`copy_from_slice` between a 128-byte buffer and a 1-byte slice), and the `wfe` panic handler silently halts the firmware — matrix scanning stops, no key responds. Restored the interrupt OUT endpoint so LED state lands on the OUT pipe (`pull_raw_output`) and the buggy SET_REPORT path is never hit. v4.7.3's BIOS-compatible boot keyboard (subclass/protocol `1`/`1`, `ForceBoot`, no Report ID, 8-byte report) is preserved unchanged.

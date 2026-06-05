@@ -1058,20 +1058,20 @@ pub fn render_splash(rgb: &mut RgbMatrix) {
 
 // ── Mode 36: MULTISPLASH ────────────────────────────────────────────
 pub fn render_multisplash(rgb: &mut RgbMatrix) {
-    let count = rgb.hit_count;
+    let count = core::cmp::min(rgb.hit_count as usize, 20);
     let current = rgb.anim_tick;
     for i in 0..LED_COUNT {
         let (px, py) = LED_POSITIONS[i];
         let mut hsv_h = rgb.hue;
         let mut hsv_v: u8 = 0;
-        for j in 0..count {
-            if j as usize >= rgb.hit_index.len() { break; }
-            let hx = rgb.hit_x[j as usize] as i16;
-            let hy = rgb.hit_y[j as usize] as i16;
+        for k in 0..count {
+            let j = ((rgb.hit_count as usize) - count + k) % 20;
+            let hx = rgb.hit_x[j] as i16;
+            let hy = rgb.hit_y[j] as i16;
             let dx = (px as i16) - hx;
             let dy = (py as i16) - hy;
             let dist = sqrt16((dx * dx + dy * dy) as u16);
-            let elapsed = current.wrapping_sub(rgb.hit_tick[j as usize]);
+            let elapsed = current.wrapping_sub(rgb.hit_tick[j]);
             let tick = scale16by8(elapsed as u16, qadd8(rgb.speed, 1));
             let mut effect = tick.wrapping_sub(dist as u16);
             if effect > 255 { effect = 255; }
