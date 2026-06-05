@@ -1,5 +1,27 @@
 # Changelog
 
+## v4.7.8 (2026-06-06)
+
+Fn-layer hotkey parity with the C firmware — side-LED and wireless-link keys now behave 1:1.
+
+### Fixed
+
+- **Side-LED speed keys were reversed.** `SIDE_SPI` (Fn speed-up) made the side animation *slower* and `SIDE_SPD` made it *faster*. Both firmwares index the same `side_speed_table`; C's `light_speed_control` decrements `side_speed` on speed-up (faster) and increments on speed-down. Swapped to match.
+- **Wireless-link keys switched away from USB.** `LNK_RF`/`LNK_BLE1..3` (Fn+4/1/2/3) had no guard, so they'd drop a wired session and go wireless. C ignores these presses while `link_mode == USB`; added the guard.
+- **Link-key release ignored which key was pressed.** The release path didn't check `ch == rf_sw_temp`, so holding one link key and tapping another could switch to the wrong channel (the case C's own comment warns about). Added the check.
+- **`SIDE_HUI` colour cycle differed in non-wave modes.** C's `side_colour_control` strips rainbow first when the side mode isn't Wave; Rust didn't, so leaving rainbow in Static/Breath/Mix landed on red instead of orange. Added the pre-step.
+- **`LNK_USB` re-sent `CMD_SET_LINK` even when already on USB.** Now gated on `link_mode != USB` (the side blink stays unconditional), matching C.
+
+### Verified correct (no change)
+
+- **BLE pairing long-press** — the handler runs every tick (1 ms), so its `3000` threshold = 3 s, exactly C's `RF_LONG_PRESS_DELAY` (60) at its 50 ms cadence. (Clarified the misleading comment.)
+- All `MAC_*` macros (incl. NKRO `Cmd+Shift+S` vs `Cmd+Shift+4`), `RF_DFU`, `DEV_RESET`, `SLEEP_MODE`, `BAT_SHOW`, `RGB_TEST`, `BAT_NUM`, `SIDE_VAI/VAD/MOD`, and the RGB_* keys.
+
+### Files
+
+- `src/main.rs` — `SIDE_SPI/SPD` swap, `LNK_*` USB guard + release `ch == rf_sw_temp` check, `SIDE_HUI` non-wave pre-step, `LNK_USB` re-link guard
+- `Cargo.toml` / `README.md` / `CHANGELOG.md` — bumped to 4.7.8
+
 ## v4.7.7 (2026-06-06)
 
 RGB-matrix animation parity with the C/QMK firmware — speed, brightness, colour math, mode IDs, and per-effect behaviour now match.

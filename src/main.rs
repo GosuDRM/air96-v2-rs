@@ -187,22 +187,31 @@ impl Device {
                 if pressed {
                     self.break_all_keys();
                 } else {
-                    self.proto.link_mode = LinkMode::Usb;
-                    self.proto.build_link_cmd(CMD_SET_LINK);
-                    flush(&mut self.proto);
+                    // C: only re-link if not already USB; blink regardless.
+                    if self.proto.link_mode != LinkMode::Usb {
+                        self.proto.link_mode = LinkMode::Usb;
+                        self.proto.build_link_cmd(CMD_SET_LINK);
+                        flush(&mut self.proto);
+                    }
                     self.side.blink_rf(3);
                 }
             }
             k if (keymap::KC_LNK_RF..=keymap::KC_LNK_BLE3).contains(&k) => {
                 let ch = lnk_to_channel(k);
                 if pressed {
-                    self.rf_sw_temp = ch as u8;
-                    self.rf_sw_press = true;
-                    self.rf_sw_press_delay = 0; // Reset delay on press
-                    self.break_all_keys();
-                } else if self.rf_sw_press {
+                    // C: link-switch presses are ignored while wired (link_mode != USB).
+                    if self.proto.link_mode != LinkMode::Usb {
+                        self.rf_sw_temp = ch as u8;
+                        self.rf_sw_press = true;
+                        self.rf_sw_press_delay = 0; // Reset delay on press
+                        self.break_all_keys();
+                    }
+                } else if self.rf_sw_press && ch as u8 == self.rf_sw_temp {
+                    // C: only the originally-pressed key completes the switch — without the
+                    // ch==rf_sw_temp guard, holding BLE1 + tapping BLE2 lets BLE1's release
+                    // switch to BLE1.
                     self.rf_sw_press = false;
-                    if self.rf_sw_press_delay < 3000 {
+                    if self.rf_sw_press_delay < 3000 { // 3000×1ms = 3s (C RF_LONG_PRESS_DELAY 60×50ms)
                         self.proto.link_mode = ch;
                         self.proto.rf_channel = ch as u8;
                         self.proto.ble_channel = ch as u8;
@@ -223,6 +232,12 @@ impl Device {
             },
             keymap::KC_SIDE_HUI => {
                 if pressed {
+                    // C side_colour_control: rainbow is wave-mode only — strip it first in
+                    // non-wave modes so the palette resumes from a solid colour.
+                    if self.side.mode != led::side::SIDE_WAVE && self.side.rgb_enabled {
+                        self.side.rgb_enabled = false;
+                        self.side.colour = 0;
+                    }
                     if self.side.rgb_enabled {
                         self.side.rgb_enabled = false;
                         self.side.colour = 0;
@@ -237,10 +252,12 @@ impl Device {
                 }
             },
             keymap::KC_SIDE_SPI => {
-                if pressed { self.side.speed = (self.side.speed + 1).min(4); self.save_config(); }
+                // C light_speed_control(fast): faster = side_speed-- (min 0)
+                if pressed { self.side.speed = self.side.speed.saturating_sub(1); self.save_config(); }
             },
             keymap::KC_SIDE_SPD => {
-                if pressed { self.side.speed = self.side.speed.saturating_sub(1); self.save_config(); }
+                // C light_speed_control(slow): slower = side_speed++ (max LIGHT_SPEED_MAX = 4)
+                if pressed { self.side.speed = (self.side.speed + 1).min(4); self.save_config(); }
             },
             keymap::KC_DEV_RESET => {
                 if pressed {
@@ -1308,9 +1325,10 @@ fn main() -> ! {
                 }
             }
 
-            // ── Long press handler (every tick = 1ms) ──────────────────
-            // C firmware: RF_LONG_PRESS_DELAY=60 at 50ms intervals = 3000ms
-            // Short tap (<3s): channel switch. Long hold (≥3s): BLE pairing (NEW_ADV).
+            // ── Long-press handler — runs every tick (1ms) ─────────────
+            // 3000 ticks = 3s, matching C's RF_LONG_PRESS_DELAY (60) at its 50ms
+            // cadence (60×50ms = 3s). Short tap (<3s): channel switch. Long hold
+            // (≥3s): BLE pairing (NEW_ADV).
             if dev.rf_sw_press {
                 dev.rf_sw_press_delay += 1;
                 if dev.rf_sw_press_delay >= 3000 {
