@@ -1,10 +1,40 @@
 //! USB HID keyboard driver — wired mode support.
 //!
 //! Uses the STM32F072's built-in USB FS peripheral (PA11=DM, PA12=DP)
-//! to present a composite HID device with three interfaces:
-//!   1. Boot keyboard (8-byte reports) — standard keys + LED state
-//!   2. Consumer control (2-byte reports) — media keys, volume, brightness
-//!   3. System control (2-byte reports) — sleep, power, DND
+//! to present a composite HID device with four interfaces:
+//!   1. Boot keyboard (8-byte reports, NO report ID) — standard keys + LED state
+//!   2. RAW HID / VIA (32-byte IN/OUT, vendor page 0xFF60)
+//!   3. Consumer control (2-byte reports) — media keys, volume, brightness
+//!   4. System control (2-byte reports) — sleep, power, DND
+//!
+//! ## Why interface #1 is a *boot* keyboard (BIOS / pre-OS support)
+//!
+//! PC firmware (BIOS/UEFI legacy USB support) and bootloaders do **not** parse
+//! the HID report descriptor. They only drive HID keyboards that present the
+//! USB-spec "Boot Interface": `bInterfaceSubClass = 1` (Boot) and
+//! `bInterfaceProtocol = 1` (Keyboard), and they read a *fixed* 8-byte report
+//! with **no Report ID prefix** — `[modifiers, reserved, key0..key5]` (HID 1.11
+//! Appendix B.1). A keyboard that omits the Boot subclass/protocol, or that
+//! prefixes its report with a Report ID byte, is invisible or garbled in the
+//! BIOS setup screen, boot menu, and disk-encryption prompts.
+//!
+//! The previous merged descriptor declared the keyboard with Report IDs 1/2/3
+//! on a single non-boot interface (subclass 0, protocol 0). That works under a
+//! full OS HID stack (which reads the descriptor) but is dead in BIOS — the
+//! firmware never recognises it as a keyboard, and even if it did, the Report
+//! ID 1 byte is misread as the modifier byte. That is the wired-mode "keyboard
+//! doesn't work in BIOS" bug.
+//!
+//! ## Why USB is 6KRO-only (no NKRO over the wire)
+//!
+//! `usbd-hid` gates `push_*` on a single per-interface protocol mode: a Boot
+//! interface can only transmit in boot protocol, a report interface only in
+//! report protocol (see `push_raw_input` in usbd-hid's `hid_class.rs`). There
+//! is no public API to read the host's SET_PROTOCOL choice on a `ForceBoot`
+//! interface, so we cannot do QMK-style dynamic 6KRO(boot)/NKRO(report)
+//! switching on one endpoint. We therefore pin the keyboard to boot protocol
+//! (`ForceBoot`) and always emit the 8-byte 6KRO boot report — universally
+//! compatible with BIOS and every OS. NKRO is unchanged on the wireless path.
 //!
 //! Works on Windows, Linux, and macOS without drivers.
 
@@ -16,7 +46,9 @@ use usb_device::prelude::*;
 use usbd_hid::descriptor::generator_prelude::*;
 use usbd_hid::descriptor::MediaKeyboardReport;
 use usbd_hid::descriptor::SerializedDescriptor;
-use usbd_hid::hid_class::HIDClass;
+use usbd_hid::hid_class::{
+    HIDClass, HidClassSettings, HidCountryCode, HidProtocol, HidSubClass, ProtocolModeConfig,
+};
 
 const USB_VID: u16 = 0x19F5;
 const USB_PID: u16 = 0x3266;
@@ -34,103 +66,90 @@ pub struct SystemControlReport16 {
     pub usage_id: u16,
 }
 
-/// Combined Keyboard Descriptor (134 bytes)
+/// Boot keyboard report descriptor (63 bytes) — HID 1.11 Appendix B.1.
 ///
-/// Merges three top-level collections into a single HID interface:
-///   Report ID 1 — standard boot keyboard (8-byte reports)
-///   Report ID 2 — NKRO keyboard bitmap (33-byte reports, 248 keys)
-///   Report ID 3 — RAW HID for VIA (32-byte IN/OUT, vendor page 0xFF60)
+/// Single top-level collection, **no Report ID**, fixed 8-byte input report:
+///   byte 0    — modifier bitmap (LCtrl..RGui)
+///   byte 1    — reserved (0)
+///   bytes 2-7 — up to six pressed keycodes (6KRO)
+/// plus a 1-byte LED output report (NumLock..Kana + 3 bits padding).
 ///
-/// All three share the same HIDClass IN/OUT endpoint — demuxed by Report ID
-/// at the byte level. This keeps the total USB interface count at 3, avoiding
-/// the STM32F072 EP-memory overflow that broke v3.7.0 (NKRO as 4th interface)
-/// and v4.4.0 (RAW HID as 4th interface).
-pub const COMBINED_KEYBOARD_DESC: &[u8] = &[
-    0x05, 0x01,       // USAGE_PAGE (Generic Desktop)
-    0x09, 0x06,       // USAGE (Keyboard)
-    0xA1, 0x01,       // COLLECTION (Application)
-    0x85, 0x01,       //   REPORT_ID (1)
+/// Paired with `bInterfaceSubClass=1` / `bInterfaceProtocol=1` so BIOS, UEFI,
+/// and bootloaders recognise and read it. Because there is no Report ID, the
+/// boot-protocol consumer reads it byte-for-byte; the OS reads the identical
+/// format in report protocol.
+pub const BOOT_KEYBOARD_DESC: &[u8] = &[
+    0x05, 0x01, // USAGE_PAGE (Generic Desktop)
+    0x09, 0x06, // USAGE (Keyboard)
+    0xA1, 0x01, // COLLECTION (Application)
     // Modifiers (8 bits)
-    0x05, 0x07,       //   USAGE_PAGE (Keyboard)
-    0x19, 0xE0,       //   USAGE_MINIMUM (Keyboard Left Control)
-    0x29, 0xE7,       //   USAGE_MAXIMUM (Keyboard Right GUI)
-    0x15, 0x00,       //   LOGICAL_MINIMUM (0)
-    0x25, 0x01,       //   LOGICAL_MAXIMUM (1)
-    0x75, 0x01,       //   REPORT_SIZE (1)
-    0x95, 0x08,       //   REPORT_COUNT (8)
-    0x81, 0x02,       //   INPUT (Data,Var,Abs)
+    0x05, 0x07, //   USAGE_PAGE (Keyboard)
+    0x19, 0xE0, //   USAGE_MINIMUM (Keyboard Left Control)
+    0x29, 0xE7, //   USAGE_MAXIMUM (Keyboard Right GUI)
+    0x15, 0x00, //   LOGICAL_MINIMUM (0)
+    0x25, 0x01, //   LOGICAL_MAXIMUM (1)
+    0x75, 0x01, //   REPORT_SIZE (1)
+    0x95, 0x08, //   REPORT_COUNT (8)
+    0x81, 0x02, //   INPUT (Data,Var,Abs)
     // Reserved byte
-    0x95, 0x01,       //   REPORT_COUNT (1)
-    0x75, 0x08,       //   REPORT_SIZE (8)
-    0x81, 0x03,       //   INPUT (Cnst,Var,Abs)
-    // LEDs (5 bits + 3 bits padding)
-    0x05, 0x08,       //   USAGE_PAGE (LEDs)
-    0x19, 0x01,       //   USAGE_MINIMUM (Num Lock)
-    0x29, 0x05,       //   USAGE_MAXIMUM (Kana)
-    0x25, 0x01,       //   LOGICAL_MAXIMUM (1)
-    0x75, 0x01,       //   REPORT_SIZE (1)
-    0x95, 0x05,       //   REPORT_COUNT (5)
-    0x91, 0x02,       //   OUTPUT (Data,Var,Abs)
-    0x95, 0x01,       //   REPORT_COUNT (1)
-    0x75, 0x03,       //   REPORT_SIZE (3)
-    0x91, 0x03,       //   OUTPUT (Cnst,Var,Abs)
-    // Keycodes (6 bytes)
-    0x05, 0x07,       //   USAGE_PAGE (Keyboard)
-    0x19, 0x00,       //   USAGE_MINIMUM (Reserved (no event indicated))
-    0x29, 0xDD,       //   USAGE_MAXIMUM (221)
-    0x26, 0xFF, 0x00, //   LOGICAL_MAXIMUM (255)
-    0x95, 0x06,       //   REPORT_COUNT (6)
-    0x75, 0x08,       //   REPORT_SIZE (8)
-    0x81, 0x00,       //   INPUT (Data,Arr,Abs)
-    0xC0,             // END_COLLECTION
+    0x95, 0x01, //   REPORT_COUNT (1)
+    0x75, 0x08, //   REPORT_SIZE (8)
+    0x81, 0x03, //   INPUT (Cnst,Var,Abs)
+    // LEDs (5 bits + 3 bits padding) — host-driven (NumLock, CapsLock, …)
+    0x95, 0x05, //   REPORT_COUNT (5)
+    0x75, 0x01, //   REPORT_SIZE (1)
+    0x05, 0x08, //   USAGE_PAGE (LEDs)
+    0x19, 0x01, //   USAGE_MINIMUM (Num Lock)
+    0x29, 0x05, //   USAGE_MAXIMUM (Kana)
+    0x91, 0x02, //   OUTPUT (Data,Var,Abs)
+    0x95, 0x01, //   REPORT_COUNT (1)
+    0x75, 0x03, //   REPORT_SIZE (3)
+    0x91, 0x03, //   OUTPUT (Cnst,Var,Abs)
+    // Keycodes (6 bytes, array)
+    0x95, 0x06, //   REPORT_COUNT (6)
+    0x75, 0x08, //   REPORT_SIZE (8)
+    0x15, 0x00, //   LOGICAL_MINIMUM (0)
+    0x26, 0xFF, 0x00, // LOGICAL_MAXIMUM (255)
+    0x05, 0x07, //   USAGE_PAGE (Keyboard)
+    0x19, 0x00, //   USAGE_MINIMUM (Reserved (no event indicated))
+    0x29, 0xFF, //   USAGE_MAXIMUM (255)
+    0x81, 0x00, //   INPUT (Data,Arr,Abs)
+    0xC0, // END_COLLECTION
+];
 
-    0x05, 0x01,       // USAGE_PAGE (Generic Desktop)
-    0x09, 0x06,       // USAGE (Keyboard)
-    0xA1, 0x01,       // COLLECTION (Application)
-    0x85, 0x02,       //   REPORT_ID (2)
-    // Modifiers (8 bits)
-    0x05, 0x07,       //   USAGE_PAGE (Keyboard)
-    0x19, 0xE0,       //   USAGE_MINIMUM (Keyboard Left Control)
-    0x29, 0xE7,       //   USAGE_MAXIMUM (Keyboard Right GUI)
-    0x15, 0x00,       //   LOGICAL_MINIMUM (0)
-    0x25, 0x01,       //   LOGICAL_MAXIMUM (1)
-    0x75, 0x01,       //   REPORT_SIZE (1)
-    0x95, 0x08,       //   REPORT_COUNT (8)
-    0x81, 0x02,       //   INPUT (Data,Var,Abs)
-    // Key bitmap (248 bits = 31 bytes)
-    0x05, 0x07,       //   USAGE_PAGE (Keyboard)
-    0x19, 0x00,       //   USAGE_MINIMUM (0)
-    0x29, 0xF7,       //   USAGE_MAXIMUM (247)
-    0x15, 0x00,       //   LOGICAL_MINIMUM (0)
-    0x25, 0x01,       //   LOGICAL_MAXIMUM (1)
-    0x75, 0x01,       //   REPORT_SIZE (1)
-    0x95, 0xF8,       //   REPORT_COUNT (248)
-    0x81, 0x02,       //   INPUT (Data,Var,Abs)
-    0xC0,             // END_COLLECTION
-
-    // ── RAW HID (VIA) — Report ID 3, vendor page 0xFF60, 32-byte IN/OUT ──
+/// RAW HID (VIA) report descriptor (29 bytes) — vendor page 0xFF60.
+///
+/// Its own interface, **no Report ID**, 32-byte IN and 32-byte OUT reports.
+/// VIA's host client identifies the device by usage page 0xFF60 / usage 0x61,
+/// not by Report ID, so a report-ID-less single-report interface is what it
+/// expects. Split out from the keyboard so the keyboard can be a clean boot
+/// interface (see module docs).
+pub const VIA_DESC: &[u8] = &[
     0x06, 0x60, 0xFF, // USAGE_PAGE (Vendor Defined 0xFF60)
-    0x09, 0x61,       // USAGE (0x61)
-    0xA1, 0x01,       // COLLECTION (Application)
-    0x85, 0x03,       //   REPORT_ID (3)
-    0x09, 0x62,       //   USAGE (0x62)
-    0x15, 0x00,       //   LOGICAL_MINIMUM (0)
-    0x26, 0xFF, 0x00, //   LOGICAL_MAXIMUM (255)
-    0x95, 0x20,       //   REPORT_COUNT (32)
-    0x75, 0x08,       //   REPORT_SIZE (8)
-    0x81, 0x02,       //   INPUT (Data,Var,Abs)
-    0x09, 0x63,       //   USAGE (0x63)
-    0x15, 0x00,       //   LOGICAL_MINIMUM (0)
-    0x26, 0xFF, 0x00, //   LOGICAL_MAXIMUM (255)
-    0x95, 0x20,       //   REPORT_COUNT (32)
-    0x75, 0x08,       //   REPORT_SIZE (8)
-    0x91, 0x02,       //   OUTPUT (Data,Var,Abs)
-    0xC0,             // END_COLLECTION
+    0x09, 0x61, // USAGE (0x61)
+    0xA1, 0x01, // COLLECTION (Application)
+    0x09, 0x62, //   USAGE (0x62)
+    0x15, 0x00, //   LOGICAL_MINIMUM (0)
+    0x26, 0xFF, 0x00, // LOGICAL_MAXIMUM (255)
+    0x95, 0x20, //   REPORT_COUNT (32)
+    0x75, 0x08, //   REPORT_SIZE (8)
+    0x81, 0x02, //   INPUT (Data,Var,Abs)
+    0x09, 0x63, //   USAGE (0x63)
+    0x15, 0x00, //   LOGICAL_MINIMUM (0)
+    0x26, 0xFF, 0x00, // LOGICAL_MAXIMUM (255)
+    0x95, 0x20, //   REPORT_COUNT (32)
+    0x75, 0x08, //   REPORT_SIZE (8)
+    0x91, 0x02, //   OUTPUT (Data,Var,Abs)
+    0xC0, // END_COLLECTION
 ];
 
 pub struct UsbHid<'a> {
     device: UsbDevice<'a, UsbBusType>,
+    /// Boot keyboard (subclass=Boot, protocol=Keyboard, ForceBoot). IN endpoint
+    /// only — host LED state arrives via SET_REPORT on the control pipe.
     keyboard: HIDClass<'a, UsbBusType>,
+    /// RAW HID / VIA — IN + OUT endpoints.
+    via: HIDClass<'a, UsbBusType>,
     consumer: HIDClass<'a, UsbBusType>,
     system: HIDClass<'a, UsbBusType>,
     /// Host-controlled keyboard LED state (bits: 0=NumLock, 1=CapsLock, 2=ScrollLock, 3=Compose, 4=Kana)
@@ -141,19 +160,38 @@ pub struct UsbHid<'a> {
     just_suspended: bool,
     /// Latched: true for one poll cycle on the resume edge
     just_resumed: bool,
-    pending_keyboard_report: Option<[u8; 9]>,
-    pending_nkro_report: Option<[u8; 33]>,
+    /// Pending 8-byte boot keyboard report (no Report ID).
+    pending_keyboard_report: Option<[u8; 8]>,
 }
 
 impl<'a> UsbHid<'a> {
     pub fn new(bus: &'a UsbBusAllocator<UsbBusType>) -> Self {
-        let keyboard = HIDClass::new(bus, COMBINED_KEYBOARD_DESC, 1);
-        let consumer = HIDClass::new(bus, MediaKeyboardReport::desc(), 1);
-        let system  = HIDClass::new(bus, SystemControlReport16::desc(), 1);
+        // Boot keyboard: advertise Boot subclass + Keyboard protocol so BIOS/UEFI
+        // recognise it, and ForceBoot so usbd-hid lets us push the 8-byte boot
+        // report regardless of the host's SET_PROTOCOL (see module docs). IN-only;
+        // LED OUTPUT comes over the control pipe via SET_REPORT.
+        let keyboard = HIDClass::new_ep_in_with_settings(
+            bus,
+            BOOT_KEYBOARD_DESC,
+            1,
+            HidClassSettings {
+                subclass: HidSubClass::Boot,
+                protocol: HidProtocol::Keyboard,
+                config: ProtocolModeConfig::ForceBoot,
+                locale: HidCountryCode::NotSupported,
+            },
+        );
+        // VIA needs an OUT endpoint for host→device commands, so it keeps the
+        // full IN+OUT pair. Consumer/system are IN-only — switching them off the
+        // IN+OUT `new()` frees the OUT endpoints that make room for the extra
+        // boot-keyboard + VIA interfaces within the STM32F072 EP budget.
+        let via = HIDClass::new(bus, VIA_DESC, 1);
+        let consumer = HIDClass::new_ep_in(bus, MediaKeyboardReport::desc(), 1);
+        let system = HIDClass::new_ep_in(bus, SystemControlReport16::desc(), 1);
         let device = UsbDeviceBuilder::new(bus, UsbVidPid(USB_VID, USB_PID))
             .manufacturer("NuPhy")
             .product("Air96 V2 Keyboard")
-            .serial_number("v4.7.2")
+            .serial_number("v4.7.3")
             .device_class(0x00)
             .device_sub_class(0x00)
             .device_protocol(0x00)
@@ -165,6 +203,7 @@ impl<'a> UsbHid<'a> {
         Self {
             device,
             keyboard,
+            via,
             consumer,
             system,
             led_state: 0,
@@ -172,18 +211,17 @@ impl<'a> UsbHid<'a> {
             just_suspended: false,
             just_resumed: false,
             pending_keyboard_report: None,
-            pending_nkro_report: None,
         }
     }
 
     /// Poll the USB device and HID classes. Returns true if data was exchanged.
     /// Also detects suspend/resume transitions and processes host LED reports.
     /// `rgb` is the live RGB matrix state, passed through to the VIA dispatch
-    /// on Report ID 3 OUT reports so channel-3 (RGB matrix) values read from
-    /// and write to the live state owned by the caller. `save_pending` is set
-    /// when VIA's `ID_CUSTOM_SAVE` arrives so the main loop can flush to flash
-    /// during an idle tick (consistent with how firmware-side config changes
-    /// are already deferred).
+    /// on RAW HID OUT reports so channel-3 (RGB matrix) values read from and
+    /// write to the live state owned by the caller. `save_pending` is set when
+    /// VIA's `ID_CUSTOM_SAVE` arrives so the main loop can flush to flash during
+    /// an idle tick (consistent with how firmware-side config changes are
+    /// already deferred).
     pub fn poll(
         &mut self,
         rgb: &mut crate::led::rgb::RgbMatrix,
@@ -191,7 +229,12 @@ impl<'a> UsbHid<'a> {
     ) -> bool {
         let was_suspended = self.suspended;
 
-        let result = self.device.poll(&mut [&mut self.keyboard, &mut self.consumer, &mut self.system]);
+        let result = self.device.poll(&mut [
+            &mut self.keyboard,
+            &mut self.via,
+            &mut self.consumer,
+            &mut self.system,
+        ]);
 
         // Suspend / resume edge detection (latched; consumed by take_suspend_edge).
         // Mirrors QMK's suspend_power_down_kb / suspend_wakeup_init_kb hooks so
@@ -206,39 +249,28 @@ impl<'a> UsbHid<'a> {
             self.just_resumed = true;
         }
 
-        // Read host LED state via SET_REPORT or OUT endpoint (boot keyboard).
-        // The OUT endpoint is shared across all three Report IDs in the merged
-        // descriptor, so we demux by Report ID byte:
-        //   Report ID 1 → boot keyboard LED state (NumLock, CapsLock, …)
-        //   Report ID 3 → RAW HID command from VIA
-        // Buffer is 33 bytes (Report ID + 32) which covers both 8-byte LED
-        // reports and 32-byte VIA payloads.
-        let mut led_buf = [0u8; 33];
+        // Host keyboard LED state (NumLock/CapsLock/…) arrives as a SET_REPORT
+        // on the control pipe (the boot keyboard has no OUT endpoint). The boot
+        // report has no Report ID, so the LED bitmap is byte 0 of the payload.
+        let mut led_buf = [0u8; 8];
         if let Ok(info) = self.keyboard.pull_raw_report(&mut led_buf) {
-            if info.report_id == 1 {
+            if info.len >= 1 {
                 self.led_state = led_buf[0];
             }
         }
-        if let Ok(len) = self.keyboard.pull_raw_output(&mut led_buf) {
-            if len >= 2 && led_buf[0] == 1 {
-                self.led_state = led_buf[1];
-            } else if len == 33 && led_buf[0] == 3 {
-                // RAW HID (VIA) command: bytes [1..33] are the 32-byte payload.
-                // via_command() mutates the buffer in place with the response.
-                let mut cmd = [0u8; 32];
-                cmd.copy_from_slice(&led_buf[1..33]);
-                if crate::via::via_command(&mut cmd, rgb, save_pending) {
-                    // Echo the same Report ID back on the IN endpoint.
-                    // The host-side VIA client demuxes by Report ID, so the
-                    // 32-byte response stays associated with the request.
-                    led_buf[0] = 0x03;
-                    led_buf[1..33].copy_from_slice(&cmd);
-                    let _ = self.keyboard.push_raw_input(&led_buf);
-                }
+
+        // RAW HID (VIA) command on the dedicated VIA interface's OUT endpoint.
+        // No Report ID, so the 32-byte payload is the whole report. via_command()
+        // mutates the buffer in place with the response, which we echo back on
+        // the VIA IN endpoint.
+        let mut cmd = [0u8; 32];
+        if let Ok(len) = self.via.pull_raw_output(&mut cmd) {
+            if len > 0 && crate::via::via_command(&mut cmd, rgb, save_pending) {
+                let _ = self.via.push_raw_input(&cmd);
             }
         }
 
-        // Flush any pending keyboard reports
+        // Flush any pending keyboard report
         self.flush_reports();
 
         result
@@ -301,34 +333,41 @@ impl<'a> UsbHid<'a> {
                 Err(_) => self.pending_keyboard_report = None,
             }
         }
-        if self.pending_keyboard_report.is_none() {
-            if let Some(report) = self.pending_nkro_report {
-                match self.keyboard.push_raw_input(&report) {
-                    Ok(_) => self.pending_nkro_report = None,
-                    Err(UsbError::WouldBlock) => {}
-                    Err(_) => self.pending_nkro_report = None,
-                }
-            }
-        }
     }
 
+    /// Queue an 8-byte 6KRO boot keyboard report (no Report ID).
     pub fn send_keyboard(&mut self, modifiers: u8, keys: &[u8; 6]) {
-        let mut report = [0u8; 9];
-        report[0] = 1; // Report ID 1
-        report[1] = modifiers;
-        report[2] = 0; // reserved
-        report[3..9].copy_from_slice(keys);
+        let mut report = [0u8; 8];
+        report[0] = modifiers;
+        report[1] = 0; // reserved
+        report[2..8].copy_from_slice(keys);
         self.pending_keyboard_report = Some(report);
         self.flush_reports();
     }
 
+    /// USB is a 6KRO boot keyboard (see module docs), so there is no NKRO report
+    /// over the wire. Callers still hand us an NKRO bitmap for symmetry with the
+    /// wireless path; collapse it back to the first six pressed keycodes and emit
+    /// a standard boot report. `current_keys` never holds more than six entries,
+    /// so this is lossless in practice.
     pub fn send_nkro(&mut self, modifiers: u8, bitmap: &[u8; 31]) {
-        let mut report = [0u8; 33];
-        report[0] = 2; // Report ID 2
-        report[1] = modifiers;
-        report[2..33].copy_from_slice(bitmap);
-        self.pending_nkro_report = Some(report);
-        self.flush_reports();
+        let mut keys = [0u8; 6];
+        let mut n = 0;
+        'scan: for (byte_idx, &b) in bitmap.iter().enumerate() {
+            if b == 0 {
+                continue;
+            }
+            for bit in 0..8 {
+                if b & (1 << bit) != 0 {
+                    keys[n] = (byte_idx * 8 + bit) as u8;
+                    n += 1;
+                    if n == 6 {
+                        break 'scan;
+                    }
+                }
+            }
+        }
+        self.send_keyboard(modifiers, &keys);
     }
 
     pub fn send_consumer(&mut self, usage: u16) {
@@ -343,7 +382,6 @@ impl<'a> UsbHid<'a> {
 
     pub fn release_all(&mut self) {
         self.send_keyboard(0, &[0; 6]);
-        self.send_nkro(0, &[0; 31]);
         self.send_consumer(0);
         self.send_system(0);
     }

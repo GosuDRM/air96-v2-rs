@@ -1,5 +1,24 @@
 # Changelog
 
+## v4.7.3 (2026-06-05)
+
+Wired keyboard now works in BIOS / UEFI / pre-OS — proper HID boot keyboard.
+
+### Fixed
+
+- **Keyboard dead in BIOS / UEFI setup / bootloaders (wired mode)** — the USB keyboard interface was not a USB-spec boot keyboard, so pre-OS firmware (which does not parse the HID report descriptor) never drove it. Two defects: (1) the interface advertised `bInterfaceSubClass=0` / `bInterfaceProtocol=0` instead of `1`/`1` (Boot/Keyboard), so BIOS didn't recognise it as a keyboard at all; (2) every report was prefixed with a Report ID byte (`0x01` for 6KRO, `0x02` for NKRO), but boot protocol reads a fixed `[modifiers, reserved, key0..key5]` with **no Report ID** — BIOS would read the `0x01` Report-ID as the modifier byte and shift every keycode. Wired mode also defaulted to NKRO (Report ID 2), which pre-OS firmware cannot read in any form. The keyboard is now a clean boot keyboard: subclass/protocol `1`/`1`, `ForceBoot`, no Report ID, fixed 8-byte 6KRO report — matching what QMK presents. Works in the BIOS setup screen, boot menu, and disk-encryption prompts.
+
+### Changed
+
+- **USB HID restructured into four interfaces** — boot keyboard (IN-only; host LED state via `SET_REPORT` on the control pipe), VIA RAW HID (own interface, no Report ID, IN+OUT), consumer (IN-only), system (IN-only). Consumer/system dropped their unused OUT endpoints to keep the new boot-keyboard + VIA interfaces within the STM32F072 endpoint-memory budget (the constraint that broke v3.7.0 and v4.4.0).
+- **USB is now 6KRO, not NKRO.** `usbd-hid` gates transmission on a single per-interface protocol mode and exposes no way to read the host's `SET_PROTOCOL` choice on a `ForceBoot` interface, so QMK-style dynamic 6KRO(boot)/NKRO(report) switching on one endpoint isn't possible with this crate. Boot protocol is pinned for universal BIOS + OS compatibility. **NKRO over wireless is unchanged.**
+
+### Files
+
+- `src/usb_hid.rs` — `BOOT_KEYBOARD_DESC` + `VIA_DESC` (no Report ID); boot keyboard via `new_ep_in_with_settings(Boot/Keyboard/ForceBoot)`; VIA on its own interface; consumer/system IN-only; `send_keyboard`/`send_nkro` emit the 8-byte boot report
+- `src/test.rs` — replaced the merged-descriptor test with boot-keyboard + VIA descriptor assertions (94 total)
+- `Cargo.toml` / `src/usb_hid.rs` / `README.md` / `CHANGELOG.md` — bumped to 4.7.3
+
 ## v4.7.2 (2026-06-05)
 
 Windows 11 USB enumeration fix + hardware LED-off at shutdown.

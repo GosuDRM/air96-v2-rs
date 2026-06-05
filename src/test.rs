@@ -550,64 +550,46 @@ fn system_report_usage_values() {
 }
 
 #[test]
-fn combined_keyboard_descriptor_and_reports() {
-    let desc = crate::usb_hid::COMBINED_KEYBOARD_DESC;
-    // 107 (boot kbd + NKRO) + 36 (RAW HID collection with Report ID 3) = 143
-    assert_eq!(desc.len(), 143);
+fn boot_keyboard_descriptor_and_reports() {
+    let desc = crate::usb_hid::BOOT_KEYBOARD_DESC;
 
-    // Verify Report ID 1 (boot keyboard) is declared in the descriptor
-    // 0x85, 0x01 => Report ID 1
-    assert_eq!(desc[6], 0x85);
-    assert_eq!(desc[7], 0x01);
+    // Boot keyboard descriptor: single Generic-Desktop/Keyboard collection,
+    // NO Report ID (so BIOS reads the bare 8-byte report).
+    assert_eq!(desc[0], 0x05); // USAGE_PAGE (Generic Desktop)
+    assert_eq!(desc[1], 0x01);
+    assert_eq!(desc[2], 0x09); // USAGE (Keyboard)
+    assert_eq!(desc[3], 0x06);
+    assert_eq!(desc[4], 0xA1); // COLLECTION (Application)
+    assert_eq!(desc[5], 0x01);
+    // The very next item must be the modifier usage page (0x05,0x07), i.e. there
+    // is NO 0x85 (REPORT_ID) prefix anywhere — that is the whole point.
+    assert_eq!(desc[6], 0x05);
+    assert_eq!(desc[7], 0x07);
+    assert!(!desc.windows(1).any(|w| w[0] == 0x85), "boot kbd must have no Report ID");
 
-    // Verify Report ID 2 (NKRO bitmap) is declared in the descriptor
-    // 0x85, 0x02 => Report ID 2
-    assert_eq!(desc[72], 0x85);
-    assert_eq!(desc[73], 0x02);
+    // VIA RAW HID descriptor: vendor page 0xFF60, usage 0x61, no Report ID.
+    let via = crate::usb_hid::VIA_DESC;
+    assert_eq!(via[0], 0x06); // USAGE_PAGE (Vendor 0xFF60)
+    assert_eq!(via[1], 0x60);
+    assert_eq!(via[2], 0xFF);
+    assert_eq!(via[3], 0x09); // USAGE (0x61)
+    assert_eq!(via[4], 0x61);
+    assert_eq!(via[5], 0xA1); // COLLECTION (Application)
+    assert!(!via.windows(1).any(|w| w[0] == 0x85), "VIA must have no Report ID");
 
-    // Verify Report ID 3 (RAW HID for VIA) is declared in the descriptor
-    // 0x85, 0x03 => Report ID 3, sits inside the 3rd top-level collection
-    // (vendor page 0xFF60, vendor usage 0x61)
-    let raw_hid_start = 107;
-    assert_eq!(desc[raw_hid_start + 0], 0x06); // USAGE_PAGE
-    assert_eq!(desc[raw_hid_start + 1], 0x60);
-    assert_eq!(desc[raw_hid_start + 2], 0xFF);
-    assert_eq!(desc[raw_hid_start + 3], 0x09); // USAGE
-    assert_eq!(desc[raw_hid_start + 4], 0x61);
-    assert_eq!(desc[raw_hid_start + 5], 0xA1); // COLLECTION
-    assert_eq!(desc[raw_hid_start + 6], 0x01);
-    assert_eq!(desc[raw_hid_start + 7], 0x85); // REPORT_ID
-    assert_eq!(desc[raw_hid_start + 8], 0x03);
-    
-    // Verify standard keyboard report serialization format
+    // Verify boot keyboard report serialization format: 8 bytes, no Report ID.
+    //   byte 0 = modifiers, byte 1 = reserved, bytes 2..8 = keycodes.
     let modifiers = 0x05; // Ctrl + Alt
     let keys = [0x04, 0x05, 0x06, 0x00, 0x00, 0x00];
-    
-    let mut report = [0u8; 9];
-    report[0] = 1; // Report ID 1
-    report[1] = modifiers;
-    report[2] = 0; // reserved
-    report[3..9].copy_from_slice(&keys);
-    
-    assert_eq!(report[0], 1);
-    assert_eq!(report[1], 0x05);
-    assert_eq!(report[2], 0);
-    assert_eq!(&report[3..9], &keys);
-    
-    // Verify NKRO report serialization format
-    let mut bitmap = [0u8; 31];
-    bitmap[0] = 0x10; // some keycode bit
-    bitmap[1] = 0x20;
-    
-    let mut nkro_report = [0u8; 33];
-    nkro_report[0] = 2; // Report ID 2
-    nkro_report[1] = modifiers;
-    nkro_report[2..33].copy_from_slice(&bitmap);
-    
-    assert_eq!(nkro_report[0], 2);
-    assert_eq!(nkro_report[1], modifiers);
-    assert_eq!(nkro_report[2], bitmap[0]);
-    assert_eq!(nkro_report[3], bitmap[1]);
+
+    let mut report = [0u8; 8];
+    report[0] = modifiers;
+    report[1] = 0; // reserved
+    report[2..8].copy_from_slice(&keys);
+
+    assert_eq!(report[0], 0x05);
+    assert_eq!(report[1], 0);
+    assert_eq!(&report[2..8], &keys);
 }
 
 #[test]

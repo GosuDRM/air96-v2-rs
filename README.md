@@ -33,23 +33,14 @@
 
 ## ✨ What's New
 
+### v4.7.3
+
+- ⌨️ **Wired keyboard now works in BIOS / UEFI / bootloaders** — the USB keyboard is now a proper HID **boot keyboard** (`bInterfaceSubClass=1`, `bInterfaceProtocol=1`) sending the fixed 8-byte report with **no Report ID**, so it's recognised in the BIOS setup screen, boot menu, and disk-encryption prompts. Previously the interface advertised subclass/protocol `0/0` and prefixed every report with a Report ID byte (and defaulted to NKRO over USB), all of which pre-OS firmware can't read. VIA moved to its own RAW HID interface. **Wired is now 6KRO**; NKRO is unchanged over wireless.
+
 ### v4.7.2
 
 - 🪟 **Windows 11 USB fix** — the keyboard now enumerates reliably on Windows 11. The polled USB stack asserted the D+ pull-up ~200 ms before the main loop began polling (during the EEPROM load, dial scan and RF handshake), so the device couldn't answer the host's enumeration requests in time and Windows showed "USB device not recognized". USB is now brought up as the **last step before the polling loop**, so the pull-up asserts only once the bus can be serviced.
 - 🌑 **LEDs off at shutdown — hardware kill** — the USB-suspend edge now cuts the LED boost + driver-shutdown rails (`DC_BOOST`/`SDB1`/`SDB2`) directly, independent of the 1 s sleep debounce. *(Completes the v4.7.0 fix.)*
-
-### v4.7.1
-
-- 😴 **Sleep/wake fixes** — the "disable sleep" toggle (Fn+ScrLk) works again, no more spurious sleep while on USB, and a **keypress now wakes a sleeping PC** (USB remote wakeup). Found via a full sleep/wake diff against the C reference.
-
-### v4.7.0
-
-- 🌙 **LEDs now actually turn off at PC shutdown/suspend** — the suspend dark-frame is held by a persistent render gate that mirrors the C reference's suspend spin, instead of a one-shot frame the animation/side renderers overwrote within ~16 ms. Caps/Num indicator LEDs go dark too, and resume repaints automatically. *(Completes the v4.5.0 fix.)*
-
-### v4.6.0
-
-- 🎛️ **VIA support** — remap the dynamic keymap and control the RGB matrix live from the VIA app. RAW HID embedded as Report ID 3 inside the existing boot-kbd interface (no 4th interface, no EP-memory overflow); protocol v12, channel 3 reads/writes `RgbMatrix.{val,mode,speed,hue,sat}` in place.
-- 💡 **Immediate USB suspend LED-off** — RGB matrix zeroed the same cycle the host signals suspend (mirrors C `suspend_power_down_kb`).
 
 [Full changelog →](CHANGELOG.md)
 
@@ -58,9 +49,9 @@
 ## 🌟 Features
 
 - **Pure Rust, `no_std`** — full rewrite of the QMK C firmware for the STM32F072, no RTOS.
-- **Composite USB HID** — boot keyboard, full **NKRO**, consumer/media keys, and system control on the built-in USB FS peripheral. Driverless on Windows, macOS, and Linux.
-- **VIA support** — remap the dynamic keymap and drive the RGB matrix live from the VIA app (Report ID 3, protocol v12).
-- **Wireless** — Bluetooth LE (3 channels) + 2.4 GHz proprietary link over an NRF52832 module, with hold-to-pair and battery reporting.
+- **Composite USB HID** — BIOS-compatible **boot keyboard** (6KRO over USB), consumer/media keys, and system control on the built-in USB FS peripheral. Driverless on Windows, macOS, and Linux.
+- **VIA support** — remap the dynamic keymap and drive the RGB matrix live from the VIA app (dedicated RAW HID interface, protocol v12).
+- **Wireless** — Bluetooth LE (3 channels) + 2.4 GHz proprietary link over an NRF52832 module, with full **NKRO**, hold-to-pair and battery reporting.
 - **50 RGB matrix effects** + 5 side-LED modes — HSV control, reactive and typing-heatmap animations, per-key Caps/Num indicators.
 - **Power management** — inactivity sleep with GPIO rail power-down, plus instant LED-off on USB suspend / PC shutdown.
 - **5-layer keymap** with 35 custom keycodes (Mac/Win bases + Fn + Function layers).
