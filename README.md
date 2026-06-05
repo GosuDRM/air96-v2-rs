@@ -37,38 +37,6 @@
 
 - ⌨️ **Fn-layer hotkey parity** — fixed the reversed side-LED speed keys (`SIDE_SPI`/`SPD`), wireless-link keys that switched away from USB, a link-key release edge bug, and the `SIDE_HUI` colour cycle in non-wave modes. All 1:1 with the C firmware.
 
-### v4.7.7
-
-- 🎨 **RGB animations now 1:1 with the QMK/C firmware** — corrected default speed (127) and brightness (151), 52-step val/speed keys, bit-exact HSV→RGB, QMK/VIA mode numbering (VIA effect selection works again), 8-deep reactive memory, and fixes to the splash/beacon/raindrops/heatmap math. **Upgrading resets RGB/side settings once** (EEPROM magic bumped 0xA8 → 0xA9).
-
-### v4.7.6
-
-- 🌑 **LEDs actually turn off at PC shutdown** — the v4.7.2 hardware-kill was self-reversing: a resume/reset transient at shutdown re-powered the rails and (USB being poll-only with the host gone) nothing cut them again. The off is now **latched** until a genuine keypress- or host-driven wake, mirroring the C firmware's `key_wake`/`usb_wake` gating.
-
-### v4.7.5
-
-- 🛠️ **Parity fixes from C↔Rust audit**
-  - VIA `EEPROM_RESET` also resets the dynamic keymap
-  - `DYNAMIC_KEYMAP_RESET` zeroes layers 5..7 (were `0xFFFF`)
-  - `SIDE_HUI` cycles back to rainbow after Lavender
-  - Caps Lock side-LED: white → cyan
-  - Full-charge battery breath: rising-edge latch
-  - RGB defaults: `hue=255, val=223, speed=223`
-  - `render_multisplash` uses `min(count, 20)` + wraparound
-
-### v4.7.4
-
-- 🛠️ **Wired keyboard responds to keypresses again** — restored the keyboard interrupt OUT endpoint so lock-LED state lands on `pull_raw_output` instead of triggering `usbd-hid` 0.6.2's panicking `SET_REPORT` path.
-
-### v4.7.3
-
-- ⌨️ **Wired keyboard works in BIOS / UEFI / bootloaders** — proper HID boot keyboard (subclass/protocol `1`/`1`, no Report ID, 8-byte 6KRO report). VIA moved to its own RAW HID interface.
-
-### v4.7.2
-
-- 🪟 **Windows 11 USB enumeration fix** — USB peripheral brought up as the last step before polling.
-- 🌑 **LEDs off at shutdown — hardware kill** — USB-suspend edge cuts `DC_BOOST` / `SDB1` / `SDB2`.
-
 [Full changelog →](CHANGELOG.md)
 
 ---
