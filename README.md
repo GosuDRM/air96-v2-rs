@@ -33,6 +33,10 @@
 
 ## ✨ What's New
 
+### v4.7.6
+
+- 🌑 **LEDs actually turn off at PC shutdown** — the v4.7.2 hardware-kill was self-reversing: a resume/reset transient at shutdown re-powered the rails and (USB being poll-only with the host gone) nothing cut them again. The off is now **latched** until a genuine keypress- or host-driven wake, mirroring the C firmware's `key_wake`/`usb_wake` gating.
+
 ### v4.7.5
 
 - 🛠️ **Parity fixes from C↔Rust audit**

@@ -944,6 +944,16 @@ fn main() -> ! {
     // switching from wireless to USB.
     let mut usb_sync_prescaler: u8 = 0;
 
+    // LED-rail power-down latch (PC-shutdown fix). Set true whenever we cut the
+    // LED rails for USB suspend / sleep; while true the rails must stay down
+    // until a *genuine* wake (local keypress, or the 1 s-latched host resume).
+    // A bare bus-resume edge must NOT clear it — at PC shutdown the host emits a
+    // resume/reset transient as it tears the bus down, and (USB here is poll-only
+    // with no further clean suspend to re-enter Suspend) re-powering on that
+    // transient is exactly why the LEDs used to come back on and never switch
+    // off. Mirrors C's latched f_wakeup_prepare + key_wake/usb_wake gating.
+    let mut leds_killed = false;
+
     loop {
         let tick = tick_arrived();
 
@@ -956,13 +966,22 @@ fn main() -> ! {
         };
 
         // ── Immediate Wakeup on Key Activity ──────────────────────────
-        if dev.sleep.f_wakeup_prepare && !events.is_empty() {
+        if (dev.sleep.f_wakeup_prepare || leds_killed) && !events.is_empty() {
             dev.sleep.f_wakeup_prepare = false;
+            leds_killed = false;
             dev.sleep.no_act_time = 0;
             dc_boost.set_high();
             rgb_sdb1.set_high();
             rgb_sdb2.set_high();
             dev.rgb.enabled = true;
+            // Repaint so a solid (mode 0) frame returns after the suspend-time
+            // zeroing; animated modes refill on the next tick_animation.
+            if dev.rgb.mode == 0 {
+                dev.rgb.set_hsv(dev.rgb.hue, dev.rgb.sat, dev.rgb.val);
+            } else {
+                dev.rgb.dirty1 = true;
+                dev.rgb.dirty2 = true;
+            }
             if dev.proto.link_mode == LinkMode::Usb {
                 // PC asleep + keypress → ask the host to resume (USB remote wakeup).
                 // No-op unless the bus is suspended and the host enabled it.
@@ -1025,33 +1044,44 @@ fn main() -> ! {
             dc_boost.set_low();
             rgb_sdb1.set_low();
             rgb_sdb2.set_low();
+            // Latch the kill: the just_resumed branch below must NOT re-power the
+            // rails on a bare resume transient (the host's bus teardown at PC
+            // shutdown), or the LEDs come back on and — USB being poll-only with
+            // no further clean suspend — never go off again. Only a genuine wake
+            // clears it. Gate on rgb.enabled so a user who turned RGB off isn't
+            // force-relit on the next keypress.
+            if dev.rgb.enabled {
+                leds_killed = true;
+            }
         } else if just_resumed && usb_active_link {
-            // Host-driven wake (no recent keypress): drop any key state left
-            // stale across suspend so a key held when the PC slept can't linger
-            // as a phantom report. Mirrors C, which runs m_break_all_key only on
-            // !key_wake (no_act_time >= 10) — a key-driven wake keeps its press
-            // so the key that woke the host still registers.
-            if dev.sleep.no_act_time >= 10 {
+            // Bus left USB suspend. A real key-driven wake (C's key_wake:
+            // no_act_time < 10) re-powers the rails; a bare resume with no recent
+            // keypress is treated as the teardown transient the host emits while
+            // shutting down (or a brief selective-suspend blip) and must NOT
+            // re-power them. A genuine host-driven S3 resume re-powers via the 1 s
+            // sleep latch (sleep.rs:86 usb_wake) instead, not here.
+            if dev.sleep.no_act_time < 10 {
+                leds_killed = false;
+                if dev.rgb.enabled {
+                    dc_boost.set_high();
+                    rgb_sdb1.set_high();
+                    rgb_sdb2.set_high();
+                    // Repaint: animated modes refill on the next tick_animation,
+                    // but mode 0 (solid) only renders via set_hsv.
+                    if dev.rgb.mode == 0 {
+                        dev.rgb.set_hsv(dev.rgb.hue, dev.rgb.sat, dev.rgb.val);
+                    } else {
+                        dev.rgb.dirty1 = true;
+                        dev.rgb.dirty2 = true;
+                    }
+                }
+            } else {
+                // Host-driven / transient resume: drop any key state left stale
+                // across suspend so a held key can't linger as a phantom report
+                // (mirrors C m_break_all_key on !key_wake). Leave the rails down —
+                // this is what keeps the board dark at PC shutdown.
                 dev.break_all_keys();
                 usb_hid.release_all();
-            }
-            // Power the LED rails back up (cut on the suspend edge above) so the
-            // repaint below is visible. Skip when RGB is user-disabled — its rails
-            // are meant to stay down. If the 1 s sleep handler already ran and
-            // cleared rgb.enabled, its own wakeup path (below) restores the rails.
-            if dev.rgb.enabled {
-                dc_boost.set_high();
-                rgb_sdb1.set_high();
-                rgb_sdb2.set_high();
-            }
-            // Repaint on wake: animated modes refill on the next tick_animation,
-            // but mode 0 (solid) only renders via set_hsv, so restore it
-            // explicitly or it stays dark after the suspend-time zeroing.
-            if dev.rgb.mode == 0 {
-                dev.rgb.set_hsv(dev.rgb.hue, dev.rgb.sat, dev.rgb.val);
-            } else {
-                dev.rgb.dirty1 = true;
-                dev.rgb.dirty2 = true;
             }
         }
 
@@ -1185,6 +1215,7 @@ fn main() -> ! {
                     rgb_sdb1.set_low();
                     rgb_sdb2.set_low();
                     dev.rgb.enabled = false;
+                    leds_killed = true;
                 }
 
                 if prev_wakeup && !dev.sleep.f_wakeup_prepare {
@@ -1193,6 +1224,15 @@ fn main() -> ! {
                     rgb_sdb1.set_high();
                     rgb_sdb2.set_high();
                     dev.rgb.enabled = true;
+                    leds_killed = false;
+                    // Repaint so a solid (mode 0) frame returns after the
+                    // suspend-time zeroing; animated modes refill on next tick.
+                    if dev.rgb.mode == 0 {
+                        dev.rgb.set_hsv(dev.rgb.hue, dev.rgb.sat, dev.rgb.val);
+                    } else {
+                        dev.rgb.dirty1 = true;
+                        dev.rgb.dirty2 = true;
+                    }
                 }
 
                 if dev.dev_reset_press {
@@ -1582,8 +1622,11 @@ fn main() -> ! {
             rx_idle_ticks = 0;
         }
 
-        // Halt CPU in deep standby while sleeping to reduce power draw by >99%
-        if dev.sleep.f_wakeup_prepare {
+        // Halt CPU in deep standby while sleeping to reduce power draw by >99%.
+        // Also halt while the rails are killed but the 1 s sleep latch hasn't
+        // engaged (e.g. shutdown that left the bus in Reset/Default, never a
+        // sustained Suspend) so a powered-off-but-VBUS-live host doesn't busy-spin.
+        if dev.sleep.f_wakeup_prepare || leds_killed {
             cortex_m::asm::wfi();
         }
     }

@@ -1,5 +1,18 @@
 # Changelog
 
+## v4.7.6 (2026-06-05)
+
+LEDs now actually turn off at PC shutdown — the v4.7.2 hardware-kill was self-reversing.
+
+### Fixed
+
+- **LEDs stayed lit after PC shutdown.** The v4.7.2 "hardware LED kill" cut `DC_BOOST`/`SDB1`/`SDB2` on the USB-suspend edge, but the co-located `just_resumed` branch re-powered them on *any* exit-from-Suspend (`main.rs`). At shutdown the host emits a resume/reset transient while tearing the bus down, which flips the device out of `Suspend` exactly once and re-raises the rails — and since USB here is poll-only with no further clean suspend (the host is gone), nothing ever cut them again, so the board ended rails-HIGH with a static lit frame. The off is now **latched** (`leds_killed`), mirroring the C firmware's `f_wakeup_prepare` + `key_wake`/`usb_wake` model: once the rails are cut for suspend/sleep they stay down until a *genuine* wake — a local keypress (C's `key_wake`, `no_act_time < 10`) or the 1 s-debounced host resume (`usb_wake`, `sleep.rs:86`). A bare resume/reset transient no longer re-powers them, so all three shutdown signatures (stays-suspended; suspend→reset→`Default`; suspend→resume-blip→dead) end dark and stay dark. The CPU also halts (`wfi`) while killed-but-not-yet-sleep-latched so a VBUS-live powered-off host doesn't busy-spin.
+
+### Files
+
+- `src/main.rs` — `leds_killed` latch: set on the suspend-edge and 1 s-sleep rail cut, cleared only on a key-driven or host-driven wake; `just_resumed` re-powers the rails only when `no_act_time < 10`; keypress-wake now armed by the latch (not just the sleep flag); `wfi` while killed
+- `Cargo.toml` / `README.md` / `CHANGELOG.md` — bumped to 4.7.6
+
 ## v4.7.5 (2026-06-05)
 
 Parity fixes from C↔Rust audit — closes the gaps the v4.7.4 baseline left open.
