@@ -43,7 +43,6 @@ use stm32f0xx_hal::usb::UsbBusType;
 use usb_device::bus::UsbBusAllocator;
 use usb_device::device::UsbDeviceState;
 use usb_device::prelude::*;
-use usbd_hid::descriptor::generator_prelude::*;
 use usbd_hid::descriptor::MediaKeyboardReport;
 use usbd_hid::descriptor::SerializedDescriptor;
 use usbd_hid::hid_class::{
@@ -84,18 +83,38 @@ use usbd_hid::hid_class::{
 const USB_VID: u16 = 0x19F5;
 const USB_PID: u16 = 0x3266;
 
-/// System control report with 16-bit usage_id (matches QMK's report_extra_t).
-#[gen_hid_descriptor(
-    (collection = APPLICATION, usage_page = GENERIC_DESKTOP, usage = SYSTEM_CONTROL) = {
-        (usage_min = 0x81, usage_max = 0xB7, logical_min = 1) = {
-            #[item_settings data,array,absolute,not_null] usage_id=input;
-        };
-    }
-)]
-#[allow(dead_code)]
-pub struct SystemControlReport16 {
-    pub usage_id: u16,
-}
+/// System control report descriptor (25 bytes) — Generic Desktop / System Control.
+///
+/// Hand-written (NOT `gen_hid_descriptor`) so the array bounds are valid for
+/// Windows. This is an **array** input item: the 2-byte field carries a usage
+/// *selector*, so `LOGICAL_MAXIMUM` must equal the top of the usage range
+/// (0xB7), exactly as QMK's C descriptor (`usb_descriptor.c:300-310`) declares.
+/// Value sent = the raw usage code (e.g. 0x9B), since
+/// `usage = usage_min + (value - logical_min) = value`.
+///
+/// ## Why this is hand-written: Windows "USB device not recognized"
+///
+/// The previous version used `#[gen_hid_descriptor]` on a `u16` field. The
+/// macro derives `LOGICAL_MAXIMUM` from the field's *type* (u16 → 65535), so it
+/// emitted an array whose logical range (0..65535) dwarfed its 0x81..0xB7 usage
+/// range — and the macro's spec-level `logical_min` also injected a stray
+/// reserved Main item (`0x11 0x01`, an undefined Main tag). Linux's lenient HID
+/// parser accepts that; Windows' strict `hidparse.sys` rejects the System
+/// Control interface, which surfaces as "USB device not recognized" on Windows
+/// while the keyboard works fine on Linux. No Report ID (its own interface).
+pub const SYSTEM_DESC: &[u8] = &[
+    0x05, 0x01,       // USAGE_PAGE (Generic Desktop)
+    0x09, 0x80,       // USAGE (System Control)
+    0xA1, 0x01,       // COLLECTION (Application)
+    0x19, 0x01,       //   USAGE_MINIMUM (0x01)
+    0x2A, 0xB7, 0x00, //   USAGE_MAXIMUM (0x00B7)
+    0x15, 0x01,       //   LOGICAL_MINIMUM (1)
+    0x26, 0xB7, 0x00, //   LOGICAL_MAXIMUM (0x00B7)
+    0x95, 0x01,       //   REPORT_COUNT (1)
+    0x75, 0x10,       //   REPORT_SIZE (16)
+    0x81, 0x00,       //   INPUT (Data,Array,Abs)
+    0xC0,             // END_COLLECTION
+];
 
 /// Boot keyboard report descriptor (63 bytes) — HID 1.11 Appendix B.1.
 ///
@@ -224,7 +243,7 @@ impl<'a> UsbHid<'a> {
         // any host that's tested against this firmware.
         let via = HIDClass::new(bus, VIA_DESC, 1);
         let consumer = HIDClass::new_ep_in(bus, MediaKeyboardReport::desc(), 1);
-        let system = HIDClass::new_ep_in(bus, SystemControlReport16::desc(), 1);
+        let system = HIDClass::new_ep_in(bus, SYSTEM_DESC, 1);
         let device = UsbDeviceBuilder::new(bus, UsbVidPid(USB_VID, USB_PID))
             .manufacturer("NuPhy")
             .product("Air96 V2 Keyboard")
@@ -417,8 +436,9 @@ impl<'a> UsbHid<'a> {
     }
 
     pub fn send_system(&mut self, usage: u16) {
-        let report = SystemControlReport16 { usage_id: usage };
-        let _ = self.system.push_input(&report);
+        // 2-byte little-endian array selector, no Report ID (see SYSTEM_DESC).
+        // `usage` is the raw System Control usage code; 0 releases.
+        let _ = self.system.push_raw_input(&usage.to_le_bytes());
     }
 
     pub fn release_all(&mut self) {

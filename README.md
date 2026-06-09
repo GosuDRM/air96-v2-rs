@@ -33,9 +33,9 @@
 
 ## ✨ What's New
 
-### v4.7.8
+### v4.7.9
 
-- ⌨️ **Fn-layer hotkey parity** — fixed the reversed side-LED speed keys (`SIDE_SPI`/`SPD`), wireless-link keys that switched away from USB, a link-key release edge bug, and the `SIDE_HUI` colour cycle in non-wave modes. All 1:1 with the C firmware.
+- 🪟 **Fixed "USB device not recognized" on Windows** (worked fine on Linux). The System Control HID report descriptor was malformed — a 16-bit array with `LOGICAL_MAXIMUM = 65535` plus a stray reserved item, both emitted by `#[gen_hid_descriptor]` from a `u16` field. Windows' strict HID parser rejected the interface; Linux's lenient one didn't. Hand-wrote the descriptor to match the QMK/C reference (`LOGICAL_MAXIMUM = 0xB7`), and corrected the `MAC_DND` system usage value.
 
 [Full changelog →](CHANGELOG.md)
 

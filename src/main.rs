@@ -401,8 +401,8 @@ impl Device {
                     flush(&mut self.proto);
                     self.pending_system_usb = 0x009B;
                     if self.proto.link_mode == LinkMode::Usb {
-                        // Descriptor expects 1-based index: 0x9B - 0x81 + 1 = 27
-                        usb_hid.send_system(0x9B - 0x81 + 1);
+                        // Raw usage code; SYSTEM_DESC maps value→usage 1:1.
+                        usb_hid.send_system(0x9B);
                     }
                 } else {
                     report::send_system(&mut self.proto, 0);
