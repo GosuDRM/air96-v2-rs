@@ -43,8 +43,6 @@ use stm32f0xx_hal::usb::UsbBusType;
 use usb_device::bus::UsbBusAllocator;
 use usb_device::device::UsbDeviceState;
 use usb_device::prelude::*;
-use usbd_hid::descriptor::MediaKeyboardReport;
-use usbd_hid::descriptor::SerializedDescriptor;
 use usbd_hid::hid_class::{
     HIDClass, HidClassSettings, HidCountryCode, HidProtocol, HidSubClass, ProtocolModeConfig,
 };
@@ -110,6 +108,37 @@ pub const SYSTEM_DESC: &[u8] = &[
     0x2A, 0xB7, 0x00, //   USAGE_MAXIMUM (0x00B7)
     0x15, 0x01,       //   LOGICAL_MINIMUM (1)
     0x26, 0xB7, 0x00, //   LOGICAL_MAXIMUM (0x00B7)
+    0x95, 0x01,       //   REPORT_COUNT (1)
+    0x75, 0x10,       //   REPORT_SIZE (16)
+    0x81, 0x00,       //   INPUT (Data,Array,Abs)
+    0xC0,             // END_COLLECTION
+];
+
+/// Consumer control report descriptor (23 bytes) — Consumer / Consumer Control.
+///
+/// Hand-written (NOT `gen_hid_descriptor`) for the **same reason as `SYSTEM_DESC`**:
+/// usbd-hid's `MediaKeyboardReport` is a `u16` array field, so its
+/// `#[gen_hid_descriptor]` emitted `LOGICAL_MAXIMUM = 65535` (derived from the
+/// field *type*, `0x27 0xFF 0xFF 0x00 0x00`) even though the usage selector range
+/// is only `0x00..0x0514`. Windows' strict `hidparse.sys` rejects an array whose
+/// logical range dwarfs its usage range — which, on this composite device, fails
+/// the *whole* device with "USB device not recognized." Linux's lenient parser
+/// accepts it, so wired mode worked on Linux but not Windows. v4.7.9 fixed the
+/// System interface's copy of this bug but left the Consumer interface broken.
+///
+/// Here `LOGICAL_MAXIMUM == USAGE_MAXIMUM == 0x0514`, so a reported value maps
+/// 1:1 to its usage (`usage = usage_min + (value - logical_min) = value`). The
+/// 0x00..0x0514 range covers every usage this firmware sends, including the
+/// NuPhy/macOS extras 0x029F (Mission Control), 0x02A0 (Launchpad) and 0x00CF.
+/// Value 0 releases. No Report ID (its own interface).
+pub const CONSUMER_DESC: &[u8] = &[
+    0x05, 0x0C,       // USAGE_PAGE (Consumer)
+    0x09, 0x01,       // USAGE (Consumer Control)
+    0xA1, 0x01,       // COLLECTION (Application)
+    0x19, 0x00,       //   USAGE_MINIMUM (0x00)
+    0x2A, 0x14, 0x05, //   USAGE_MAXIMUM (0x0514)
+    0x15, 0x00,       //   LOGICAL_MINIMUM (0)
+    0x26, 0x14, 0x05, //   LOGICAL_MAXIMUM (0x0514)
     0x95, 0x01,       //   REPORT_COUNT (1)
     0x75, 0x10,       //   REPORT_SIZE (16)
     0x81, 0x00,       //   INPUT (Data,Array,Abs)
@@ -242,12 +271,23 @@ impl<'a> UsbHid<'a> {
         // traffic, so dropping their OUT endpoints saves PMA without affecting
         // any host that's tested against this firmware.
         let via = HIDClass::new(bus, VIA_DESC, 1);
-        let consumer = HIDClass::new_ep_in(bus, MediaKeyboardReport::desc(), 1);
+        let consumer = HIDClass::new_ep_in(bus, CONSUMER_DESC, 1);
         let system = HIDClass::new_ep_in(bus, SYSTEM_DESC, 1);
+        // Serial number derived from Cargo.toml version so every release
+        // invalidates Windows' cached USB descriptors (indexed by VID+PID+iSerial).
+        // The previous hardcoded "v4.7.4" kept stale broken descriptors cached
+        // across releases -- the root cause of "USB device not recognized".
+        const SERIAL: &str = concat!("v", env!("CARGO_PKG_VERSION"));
+
+        // device_class=0x00 means class codes come from interface descriptors,
+        // which is correct for this composite HID device (4 independent HID
+        // interfaces).  usb-device 0.2 has .composite_with_iads() but usbd-hid
+        // 0.6 never calls writer.iad(), so IAD mode would emit device_class=0xEF
+        // with zero IADs in the config descriptor -- a guaranteed Windows reject.
         let device = UsbDeviceBuilder::new(bus, UsbVidPid(USB_VID, USB_PID))
             .manufacturer("NuPhy")
             .product("Air96 V2 Keyboard")
-            .serial_number("v4.7.4")
+            .serial_number(SERIAL)
             .device_class(0x00)
             .device_sub_class(0x00)
             .device_protocol(0x00)
@@ -431,8 +471,9 @@ impl<'a> UsbHid<'a> {
     }
 
     pub fn send_consumer(&mut self, usage: u16) {
-        let report = MediaKeyboardReport { usage_id: usage };
-        let _ = self.consumer.push_input(&report);
+        // 2-byte little-endian array selector, no Report ID (see CONSUMER_DESC).
+        // `usage` is the raw Consumer usage code; 0 releases.
+        let _ = self.consumer.push_raw_input(&usage.to_le_bytes());
     }
 
     pub fn send_system(&mut self, usage: u16) {

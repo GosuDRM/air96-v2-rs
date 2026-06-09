@@ -33,9 +33,13 @@
 
 ## ✨ What's New
 
+### v4.8.1
+
+- 🪟 **Fixed Windows "USB device not recognized" (again)**. v4.7.9 fixed the malformed HID descriptors but Windows still rejected the device because: (1) the iSerial was hardcoded as "v4.7.4" and never bumped, so Windows served stale cached broken descriptors; (2) the 4-interface composite device lacked an Interface Association Descriptor (IAD) which Windows' xHCI driver requires. Serial now auto-derives from Cargo.toml version; device class set to 0xEF/0x02/0x01 (IAD). **After flashing, clear Windows USB cache** (Device Manager - Show Hidden - uninstall old NuPhy entries, or use USBDeview).
+
 ### v4.7.9
 
-- 🪟 **Fixed "USB device not recognized" on Windows** (worked fine on Linux). The System Control HID report descriptor was malformed — a 16-bit array with `LOGICAL_MAXIMUM = 65535` plus a stray reserved item, both emitted by `#[gen_hid_descriptor]` from a `u16` field. Windows' strict HID parser rejected the interface; Linux's lenient one didn't. Hand-wrote the descriptor to match the QMK/C reference (`LOGICAL_MAXIMUM = 0xB7`), and corrected the `MAC_DND` system usage value.
+- 🪟 **Fixed "USB device not recognized" on Windows** (worked fine on Linux). Two HID interfaces — System Control and Consumer (media keys) — had malformed report descriptors: both were 16-bit arrays with `LOGICAL_MAXIMUM = 65535` (and, for System, a stray reserved item), emitted by `#[gen_hid_descriptor]` from `u16` fields. Windows' strict HID parser rejected them and failed the whole composite device; Linux's lenient one didn't. Hand-wrote `SYSTEM_DESC` and `CONSUMER_DESC` with correct bounds (`LOGICAL_MAXIMUM` = the usage max), and corrected the `MAC_DND` system usage. All four HID interfaces now validate clean.
 
 [Full changelog →](CHANGELOG.md)
 
@@ -87,13 +91,16 @@ cargo test --lib --target x86_64-unknown-linux-gnu
 
 ## ⚡ Flash
 
-### DFU (via built-in ROM bootloader)
+### DFU (via built-in ROM bootloader) — recommended
 
 Hold **Escape** while plugging in the USB cable. The keyboard enters STM32 DFU mode (`0483:DF11`).
 
 ```bash
 dfu-util -d 0483:DF11 -a 0 -s 0x08000000:leave -D air96-v2-<version>.bin
 ```
+
+> **QMK Toolbox is not recommended** for this board — it does not reliably write
+> the flash.  Use `dfu-util` (or STM32CubeProgrammer) instead.
 
 Pre-compiled binaries are available on the [Releases](../../releases) page.
 

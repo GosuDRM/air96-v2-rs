@@ -774,6 +774,7 @@ fn main() -> ! {
                 } else {
                     rx_idle = 0;
                 }
+                service_usb!(); // keep EP0 alive during the multi-ms nRF wait
             }
         }};
     }
@@ -970,6 +971,22 @@ fn main() -> ! {
     // transient is exactly why the LEDs used to come back on and never switch
     // off. Mirrors C's latched f_wakeup_prepare + key_wake/usb_wake gating.
     let mut leds_killed = false;
+
+    // ── USB servicing helper ─────────────────────────────────────────
+    // EP0 control transfers are multi-stage (SETUP → DATA → STATUS) and the
+    // host advances one stage per device response. If poll() runs only once
+    // per main-loop iteration, the blocking I2C (LED PWM), SPI (side LEDs),
+    // UART (nRF) and flash work between iterations stretches a single control
+    // transfer across ~15+ ms — long enough that strict hosts abort. Linux
+    // retries hard and limps through (dropping string descriptors); Windows /
+    // xHCI gives up with "USB device not recognized". Calling this around every
+    // blocking operation keeps EP0 advancing every ~1 ms. See USB_AUDIT.md
+    // ("USB servicing cadence"). usb_hid + dev are resolved at each call site.
+    macro_rules! service_usb {
+        () => {{
+            let _ = usb_hid.poll(&mut dev.rgb, &mut dev.save_pending);
+        }};
+    }
 
     loop {
         let tick = tick_arrived();
@@ -1416,6 +1433,10 @@ fn main() -> ! {
             }
         }
 
+        // Service USB after the per-tick debounce / dial / wireless-UART work
+        // (which fires several blocking uart_flush! sends per tick).
+        service_usb!();
+
         // Device reset blink state machine (6 phases: on,off,on,off,on,off)
         if dev.reset_blink_phase > 0 && dev.reset_blink_phase <= 6 {
             let is_on = (dev.reset_blink_phase % 2) == 1;
@@ -1476,6 +1497,7 @@ fn main() -> ! {
         // halting all rendering during suspend.
         if tick && !leds_suspended {
             dev.side.update(&dev.proto, 1, keyboard_leds, &mut dev.f_bat_hold);
+            service_usb!(); // side.update drives the side-LED SPI bus
 
             // Advance animation clock by 1ms (matches C g_rgb_timer)
             dev.rgb.anim_tick = dev.rgb.anim_tick.wrapping_add(1);
@@ -1600,6 +1622,7 @@ fn main() -> ! {
             }
             _ => {}
         }
+        service_usb!(); // each i2c flush phase writes up to 65 bytes over I2C
 
         // ── Deferred EEPROM save (only when idle, no events) ──────────
         if dev.save_pending && events.is_empty() {
@@ -1618,7 +1641,9 @@ fn main() -> ! {
                 rgb_speed: dev.rgb.speed,
                 rgb_enabled: dev.rgb.enabled,
             };
-            eeprom::save(&cfg);
+            service_usb!(); // drain pending control work before the blocking erase
+            eeprom::save(&cfg); // ~50 ms flash page erase — CPU stalls, can't poll mid-erase
+            service_usb!(); // resume servicing immediately after
         }
 
         // ── Periodic sender (every 200ms) ────────────────────────────
