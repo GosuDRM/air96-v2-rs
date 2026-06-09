@@ -1,6 +1,6 @@
 # ⌨️ Air96 V2 — Rust Firmware
 
-> A complete, from-scratch **Rust** rewrite of the NuPhy Air96 V2 wireless mechanical keyboard firmware — every QMK C feature ported, with bug/latency/optimization fixes and new capabilities layered on top. **Stable daily-driver.** [On Windows, the wired keyboard is currently not working, but the wireless keyboard is functioning normally]
+> A complete, from-scratch **Rust** rewrite of the NuPhy Air96 V2 wireless mechanical keyboard firmware — every QMK C feature ported, with bug/latency/optimization fixes and new capabilities layered on top. **Stable daily-driver.**
 
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](LICENSE)
 [![MCU](https://img.shields.io/badge/MCU-STM32F072CBTx-brightgreen.svg)](#)
