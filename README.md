@@ -35,7 +35,7 @@
 
 ### v4.8.1
 
-- 🪟 **Fixed Windows "USB device not recognized"** (worked fine on Linux). Two HID interfaces had malformed report descriptors (`LOGICAL_MAXIMUM = 65535` from `#[gen_hid_descriptor]` on `u16` fields); Windows rejected the whole composite device. Hand-wrote correct descriptors in v4.7.9, but the hardcoded iSerial "v4.7.4" meant Windows kept serving stale cached broken descriptors. Serial now auto-derives from Cargo.toml version so every release invalidates the cache. **Use `dfu-util` to flash** — QMK Toolbox does not reliably write this chip. [Full changelog →](CHANGELOG.md)
+- 🪟 **Fixed Windows "USB device not recognized"** (worked fine on Linux). Root cause: malformed HID report descriptors on the System Control and Consumer interfaces (`LOGICAL_MAXIMUM = 65535` from `#[gen_hid_descriptor]` on `u16` fields) — Windows' strict HID parser rejected the whole composite device. Hand-wrote correct descriptors in v4.7.9, but the iSerial was still hardcoded as "v4.7.4" so Windows served stale cached broken descriptors. Now auto-derived from Cargo.toml version. **Use dfu-util to flash** (QMK Toolbox does not reliably write this chip). [Full changelog →](CHANGELOG.md)
 
 ---
 
@@ -85,29 +85,7 @@ cargo test --lib --target x86_64-unknown-linux-gnu
 
 ## ⚡ Flash
 
-### Install dfu-util
-
-```bash
-# Arch / CachyOS
-sudo pacman -S dfu-util
-
-# Ubuntu / Debian
-sudo apt install dfu-util
-
-# Fedora
-sudo dnf install dfu-util
-
-# macOS
-brew install dfu-util
-
-# Windows (MSYS2)
-pacman -S mingw-w64-x86_64-dfu-util
-
-# Windows (winget)
-winget install dfu-util
-```
-
-### DFU (via built-in ROM bootloader)
+### DFU (via built-in ROM bootloader) — recommended
 
 Hold **Escape** while plugging in the USB cable. The keyboard enters STM32 DFU mode (`0483:DF11`).
 

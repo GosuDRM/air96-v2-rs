@@ -487,4 +487,5 @@ impl<'a> UsbHid<'a> {
         self.send_consumer(0);
         self.send_system(0);
     }
+
 }
