@@ -48,7 +48,7 @@ use usbd_hid::hid_class::{
 };
 
 // ───────────────────────────────────────────────────────────────────────────
-// usbd-hid 0.6.2 SET_REPORT panic — DO NOT remove the keyboard OUT endpoint.
+// usbd-hid 0.6.2 SET_REPORT panic — patched locally, keep keyboard OUT.
 // ───────────────────────────────────────────────────────────────────────────
 //
 // `usbd-hid` 0.6.2's `control_out` SET_REPORT handler does
@@ -63,15 +63,15 @@ use usbd_hid::hid_class::{
 // scanning the matrix and the keyboard becomes unresponsive to ALL keys.
 //
 // Fixed upstream in 0.7+ (`buf[..len].copy_from_slice(&xfer.data()[..len])`),
-// but 0.7 requires usb-device 0.3 while stm32-usbd 0.6 pins usb-device 0.2 —
-// so we can't simply bump the crate.
+// but 0.7 requires usb-device 0.3 while stm32-usbd 0.6 pins usb-device 0.2.
+// Cargo.toml therefore patches crates.io to a vendored 0.6.2 with that exact
+// short-buffer fix applied.
 //
-// Workaround: keep an interrupt OUT endpoint on the keyboard interface
-// (`HIDClass::new_with_settings`, not `new_ep_in_with_settings`). With an
-// interrupt OUT advertised, Windows / Linux / macOS deliver the 1-byte LED
-// state via that endpoint (read with `pull_raw_output`), and never hit the
-// buggy SET_REPORT control path. This mirrors what v4.7.2 did before the
-// boot-keyboard refactor.
+// Still keep an interrupt OUT endpoint on the keyboard interface
+// (`HIDClass::new_with_settings`, not `new_ep_in_with_settings`). With an OUT
+// endpoint advertised, Windows / Linux / macOS can deliver the 1-byte LED state
+// there (read with `pull_raw_output`) instead of depending on control
+// SET_REPORT. This mirrors what v4.7.2 did before the boot-keyboard refactor.
 //
 // BIOS doesn't care that the boot interface has an OUT endpoint — the boot
 // keyboard spec permits it (HID 1.11 §B.1) and it doesn't affect the IN
@@ -124,8 +124,8 @@ pub const SYSTEM_DESC: &[u8] = &[
 /// array whose logical range dwarfs its usage range — which, on this composite
 /// device, fails the *whole* device with "USB device not recognized." Linux's
 /// lenient parser accepts it, so wired mode worked on Linux but not Windows.
-/// v4.8.0 fixed the System interface's copy of this bug but left the Consumer
-/// interface broken.
+/// The first Windows descriptor fix corrected the System interface's copy of
+/// this bug but left the Consumer interface broken.
 ///
 /// Here `LOGICAL_MAXIMUM == USAGE_MAXIMUM == 0x02A0`, matching QMK's
 /// `usb_descriptor.c:312-323`. The range covers every usage this firmware sends,
@@ -349,10 +349,10 @@ impl<'a> UsbHid<'a> {
         // Host keyboard LED state (NumLock/CapsLock/…) arrives on the keyboard
         // interface's interrupt OUT endpoint. The boot report has no Report ID,
         // so the 1-byte payload IS the LED bitmap. We must NOT call
-        // `pull_raw_report` here: usbd-hid 0.6.2's SET_REPORT handler panics
-        // (`copy_from_slice` with mismatched lengths), and `pull_raw_report`'s
-        // own `data.copy_from_slice(&set_report_buf.buf)` panics the same way
-        // even after the fact — see the comment at the top of this file.
+        // `pull_raw_report` here: the keyboard advertises an interrupt OUT
+        // endpoint, so LED state should arrive on that path. The vendored
+        // usbd-hid patch makes the control SET_REPORT fallback non-fatal, but
+        // the OUT endpoint remains the normal path.
         let mut led_buf = [0u8; 8];
         if let Ok(len) = self.keyboard.pull_raw_output(&mut led_buf) {
             if len >= 1 {

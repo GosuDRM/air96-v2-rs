@@ -1,14 +1,16 @@
 # Changelog
 
-## v4.8.0 (2026-06-14)
+## v4.8.2 (2026-06-14)
 
-Fixed Windows USB device not recognized - descriptors, stale cache, and EP0 servicing.
+Fixed Windows USB enumeration and a short HID SET_REPORT panic that could leave
+the keyboard enumerated but unresponsive to keypresses.
 
 ### Fixed
 
 - **Windows refused to enumerate the keyboard ("USB device not recognized"); Linux was fine.** The System Control and Consumer interfaces were generated from `u16` HID array fields, producing `LOGICAL_MAXIMUM = 65535` descriptors that Windows' strict HID parser rejects. Both descriptors are now hand-written with QMK-bounded usage ranges.
 - **Windows could keep using stale broken descriptors after reflashing.** The iSerial string was hardcoded as `v4.7.4`, so Windows cached descriptors under the same VID/PID/iSerial across releases. The serial number now auto-derives from `CARGO_PKG_VERSION`, so every release invalidates that cache.
 - **The poll-only USB stack could starve EP0 during enumeration.** QMK/ChibiOS services USB from interrupts; this Rust port must call `poll()`. The firmware now services USB around multi-ms NRF waits, side-LED SPI, I2C PWM flushes, and flash saves so Windows/xHCI does not abort multi-stage descriptor requests.
+- **Windows could leave the keyboard unresponsive after enumeration.** `usbd-hid` 0.6.2 panics on short HID `SET_REPORT` packets such as the 1-byte keyboard LED report a host may send. The firmware patches `usbd-hid` locally with the upstream short-buffer fixes while staying on the `usb-device` 0.2-compatible line required by the STM32 USB stack.
 
 ### Action required after flashing
 
@@ -18,13 +20,14 @@ Fixed Windows USB device not recognized - descriptors, stale cache, and EP0 serv
   Alternatively, plug into a Windows machine that has never seen this VID/PID.
 - **Use dfu-util to flash, not QMK Toolbox.** QMK Toolbox does not reliably
   flash this STM32F072 board.  Hold Escape while plugging in to enter DFU mode,
-  then: dfu-util -d 0483:DF11 -a 0 -s 0x08000000:leave -D air96-v2-4.8.0.bin
+  then: dfu-util -d 0483:DF11 -a 0 -s 0x08000000:leave -D air96-v2-4.8.2.bin
 
 ### Files
 
-- src/usb_hid.rs - hand-written System/Consumer descriptors; serial number from CARGO_PKG_VERSION
+- src/usb_hid.rs - hand-written System/Consumer descriptors; serial number from CARGO_PKG_VERSION; keyboard OUT endpoint kept for LED reports
 - src/main.rs - USB serviced around blocking UART/SPI/I2C/flash work
-- Cargo.toml / README.md / CHANGELOG.md - bumped to 4.8.0
+- vendor/usbd-hid-0.6.2 - local short SET_REPORT buffer fix
+- Cargo.toml / README.md / CHANGELOG.md - bumped to 4.8.2
 
 ## v4.7.8 (2026-06-06)
 

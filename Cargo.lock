@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "air96-v2"
-version = "4.8.0"
+version = "4.8.2"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
@@ -350,8 +350,6 @@ checksum = "1f6cc3adc849b5292b4075fc0d5fdcf2f24866e88e336dd27a8943090a520508"
 [[package]]
 name = "usbd-hid"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b15e05bf1cfda1e9058cea54fd5b478b11779acf4cf61692a2df4fbb04e6b02a"
 dependencies = [
  "serde",
  "ssmarshal",

@@ -1,6 +1,6 @@
 [package]
 name = "air96-v2"
-version = "4.8.0"
+version = "4.8.2"
 edition = "2021"
 authors = ["GosuDRM"]
 description = "Air96 V2 wireless keyboard firmware — Rust (stm32f0xx-hal)"
@@ -19,6 +19,12 @@ nb = "1.1.0"
 # USB HID (wired mode)
 usb-device = "0.2"
 usbd-hid = "0.6"
+
+[patch.crates-io]
+# Keep the usb-device 0.2-compatible usbd-hid line, but carry the upstream
+# 0.7.x short SET_REPORT buffer fixes locally. usbd-hid 0.7 pulls usb-device
+# 0.3, which is not compatible with the current stm32f0xx-hal/stm32-usbd stack.
+usbd-hid = { path = "vendor/usbd-hid-0.6.2" }
 
 [profile.dev]
 opt-level = "s"

@@ -1,0 +1,28 @@
+[package]
+edition = "2018"
+name = "usbd-hid"
+version = "0.6.2"
+authors = ["twitchyliquid64"]
+description = "A HID class for use with usb-device."
+readme = "README.md"
+keywords = [
+    "hid",
+    "no-std",
+    "usb-device",
+]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/twitchyliquid64/usbd-hid"
+
+[dependencies.serde]
+version = "1.0"
+default-features = false
+
+[dependencies.ssmarshal]
+version = "1.0"
+default-features = false
+
+[dependencies.usb-device]
+version = "0.2.1"
+
+[dependencies.usbd-hid-macros]
+version = "0.6.1"

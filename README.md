@@ -33,9 +33,9 @@
 
 ## ✨ What's New
 
-### v4.8.0
+### v4.8.2
 
-- 🪟 **Fixed Windows "USB device not recognized"** (worked fine on Linux). Root causes were malformed System/Consumer HID descriptors, Windows' stale descriptor cache from the old hardcoded `v4.7.4` serial string, and EP0 starvation in the poll-only Rust USB stack during blocking firmware work. Descriptors are hand-written, the serial now follows `Cargo.toml`, and USB is serviced around UART/SPI/I2C/flash sections. **Use dfu-util to flash** (QMK Toolbox does not reliably write this chip). [Full changelog →](CHANGELOG.md)
+- 🪟 **Fixed Windows USB enumeration and unresponsive keypresses** (worked fine on Linux). Root causes were malformed System/Consumer HID descriptors, Windows' stale descriptor cache from the old hardcoded `v4.7.4` serial string, EP0 starvation in the poll-only Rust USB stack, and a short `SET_REPORT` panic in `usbd-hid` 0.6.2. Descriptors are hand-written, the serial now follows `Cargo.toml`, USB is serviced around blocking work, and `usbd-hid` is patched locally with the upstream short-buffer fix. **Use dfu-util to flash** (QMK Toolbox does not reliably write this chip). [Full changelog →](CHANGELOG.md)
 
 ---
 
