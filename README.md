@@ -1,6 +1,6 @@
 # ⌨️ Air96 V2 — Rust Firmware
 
->On Windows, the wired keyboard is currently not working, but the wireless keyboard is functioning normally.  A complete, from-scratch **Rust** rewrite of the NuPhy Air96 V2 wireless mechanical keyboard firmware — every QMK C feature ported, with bug/latency/optimization fixes and new capabilities layered on top. **Stable daily-driver.**
+> A complete, from-scratch **Rust** rewrite of the NuPhy Air96 V2 wireless mechanical keyboard firmware — every QMK C feature ported, with bug/latency/optimization fixes and new capabilities layered on top. **Stable daily-driver.**
 
 [![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](LICENSE)
 [![MCU](https://img.shields.io/badge/MCU-STM32F072CBTx-brightgreen.svg)](#)
@@ -33,9 +33,9 @@
 
 ## ✨ What's New
 
-### v4.8.1
+### v4.8.0
 
-- 🪟 **Fixed Windows "USB device not recognized"** (worked fine on Linux). Root cause: malformed HID report descriptors on the System Control and Consumer interfaces (`LOGICAL_MAXIMUM = 65535` from `#[gen_hid_descriptor]` on `u16` fields) — Windows' strict HID parser rejected the whole composite device. Hand-wrote correct descriptors in v4.7.9, but the iSerial was still hardcoded as "v4.7.4" so Windows served stale cached broken descriptors. Now auto-derived from Cargo.toml version. **Use dfu-util to flash** (QMK Toolbox does not reliably write this chip). [Full changelog →](CHANGELOG.md)
+- 🪟 **Fixed Windows "USB device not recognized"** (worked fine on Linux). Root causes were malformed System/Consumer HID descriptors, Windows' stale descriptor cache from the old hardcoded `v4.7.4` serial string, and EP0 starvation in the poll-only Rust USB stack during blocking firmware work. Descriptors are hand-written, the serial now follows `Cargo.toml`, and USB is serviced around UART/SPI/I2C/flash sections. **Use dfu-util to flash** (QMK Toolbox does not reliably write this chip). [Full changelog →](CHANGELOG.md)
 
 ---
 

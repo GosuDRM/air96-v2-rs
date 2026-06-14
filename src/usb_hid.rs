@@ -120,25 +120,26 @@ pub const SYSTEM_DESC: &[u8] = &[
 /// usbd-hid's `MediaKeyboardReport` is a `u16` array field, so its
 /// `#[gen_hid_descriptor]` emitted `LOGICAL_MAXIMUM = 65535` (derived from the
 /// field *type*, `0x27 0xFF 0xFF 0x00 0x00`) even though the usage selector range
-/// is only `0x00..0x0514`. Windows' strict `hidparse.sys` rejects an array whose
-/// logical range dwarfs its usage range — which, on this composite device, fails
-/// the *whole* device with "USB device not recognized." Linux's lenient parser
-/// accepts it, so wired mode worked on Linux but not Windows. v4.7.9 fixed the
-/// System interface's copy of this bug but left the Consumer interface broken.
+/// is only `0x01..0x02A0` in QMK. Windows' strict `hidparse.sys` rejects an
+/// array whose logical range dwarfs its usage range — which, on this composite
+/// device, fails the *whole* device with "USB device not recognized." Linux's
+/// lenient parser accepts it, so wired mode worked on Linux but not Windows.
+/// v4.8.0 fixed the System interface's copy of this bug but left the Consumer
+/// interface broken.
 ///
-/// Here `LOGICAL_MAXIMUM == USAGE_MAXIMUM == 0x0514`, so a reported value maps
-/// 1:1 to its usage (`usage = usage_min + (value - logical_min) = value`). The
-/// 0x00..0x0514 range covers every usage this firmware sends, including the
-/// NuPhy/macOS extras 0x029F (Mission Control), 0x02A0 (Launchpad) and 0x00CF.
-/// Value 0 releases. No Report ID (its own interface).
+/// Here `LOGICAL_MAXIMUM == USAGE_MAXIMUM == 0x02A0`, matching QMK's
+/// `usb_descriptor.c:312-323`. The range covers every usage this firmware sends,
+/// including the NuPhy/macOS extras 0x029F (Mission Control), 0x02A0
+/// (Launchpad) and 0x00CF. Value 0 remains the release/no-selector report, as in
+/// QMK. No Report ID (its own interface).
 pub const CONSUMER_DESC: &[u8] = &[
     0x05, 0x0C,       // USAGE_PAGE (Consumer)
     0x09, 0x01,       // USAGE (Consumer Control)
     0xA1, 0x01,       // COLLECTION (Application)
-    0x19, 0x00,       //   USAGE_MINIMUM (0x00)
-    0x2A, 0x14, 0x05, //   USAGE_MAXIMUM (0x0514)
-    0x15, 0x00,       //   LOGICAL_MINIMUM (0)
-    0x26, 0x14, 0x05, //   LOGICAL_MAXIMUM (0x0514)
+    0x19, 0x01,       //   USAGE_MINIMUM (0x01)
+    0x2A, 0xA0, 0x02, //   USAGE_MAXIMUM (0x02A0)
+    0x15, 0x01,       //   LOGICAL_MINIMUM (1)
+    0x26, 0xA0, 0x02, //   LOGICAL_MAXIMUM (0x02A0)
     0x95, 0x01,       //   REPORT_COUNT (1)
     0x75, 0x10,       //   REPORT_SIZE (16)
     0x81, 0x00,       //   INPUT (Data,Array,Abs)

@@ -524,12 +524,39 @@ fn system_control_report_struct() {
 }
 
 #[test]
-fn system_report_descriptor_exists() {
-    use usbd_hid::descriptor::SystemControlReport;
-    use usbd_hid::descriptor::SerializedDescriptor;
-    let desc = SystemControlReport::desc();
-    assert!(!desc.is_empty());
-    assert!(desc.len() > 5, "System control descriptor too short: {} bytes", desc.len());
+fn windows_hid_extra_descriptors_are_qmk_bounded() {
+    let system = crate::usb_hid::SYSTEM_DESC;
+    assert_eq!(
+        system,
+        &[
+            0x05, 0x01, 0x09, 0x80, 0xA1, 0x01, 0x19, 0x01, 0x2A, 0xB7, 0x00,
+            0x15, 0x01, 0x26, 0xB7, 0x00, 0x95, 0x01, 0x75, 0x10, 0x81, 0x00,
+            0xC0,
+        ]
+    );
+
+    let consumer = crate::usb_hid::CONSUMER_DESC;
+    assert_eq!(
+        consumer,
+        &[
+            0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x19, 0x01, 0x2A, 0xA0, 0x02,
+            0x15, 0x01, 0x26, 0xA0, 0x02, 0x95, 0x01, 0x75, 0x10, 0x81, 0x00,
+            0xC0,
+        ]
+    );
+
+    // Windows rejects the previous generated u16-array descriptors: the macro
+    // emitted LOGICAL_MAXIMUM = 65535 and, for System, a stray reserved Main item.
+    for desc in [system, consumer] {
+        assert!(
+            !desc.windows(5).any(|w| w == [0x27, 0xFF, 0xFF, 0x00, 0x00]),
+            "extra HID descriptor must not use generated u16 logical max"
+        );
+        assert!(
+            !desc.windows(2).any(|w| w == [0x11, 0x01]),
+            "extra HID descriptor must not contain reserved Main item"
+        );
+    }
 }
 
 #[test]
@@ -709,5 +736,4 @@ fn matrix_sym_eager_pk_lockout_clamps_at_zero() {
     m.tick_debounce();
     assert_eq!(m.counters[0][0], 0, "counter must clamp, not underflow");
 }
-
 
