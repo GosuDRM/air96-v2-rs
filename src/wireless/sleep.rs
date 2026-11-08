@@ -1,139 +1,127 @@
-//! Power management — port of sleep.c
-//!
-//! Handles inactivity timeout, USB suspend detection, and sleep/wakeup sequence.
-//! All GosuDRM latency fixes applied (K1: inline wakeup, L1: reduced delays).
+//! Power management — 1:1 port of `keyboards/air96_v2/ansi/sleep.c`.
 
-use crate::wireless::uart::{UartProtocol, CMD_HAND, CMD_SLEEP, CMD_SET_CONFIG, LinkMode, RfState};
+use crate::hal::Hal;
+use crate::kb::*;
+use crate::wireless::uart::{CMD_HAND, CMD_SET_CONFIG, CMD_SLEEP};
 
-/// Sleep timing constants (port of ansi.h defines)
-pub const SLEEP_TIME_DELAY: u16 = 100 * 360;    // 6 min inactivity
-pub const LINK_TIMEOUT: u16 = 100 * 120;         // 2 min link timeout
-pub const POWER_DOWN_DELAY: u16 = 24;
-
-pub struct SleepManager {
-    /// Inactivity counter (incremented every 10ms, reset on key event)
-    pub no_act_time: u16,
-    /// Linking timeout counter
-    pub rf_linking_time: u16,
-    /// USB suspend debounce counter
+/// sleep.c globals and `Sleep_Handle()` statics.
+pub struct SleepState {
+    pub rf_disconnect_time: u32,
+    delay_step_timer: u32,
     usb_suspend_debounce: u8,
-    /// RF disconnect debounce counter (50ms ticks)
-    rf_disconnect_time: u32,
-    /// Sleep enabled by user config
-    pub sleep_enabled: bool,
-    /// Goto-sleep flag (set by external trigger)
-    pub f_goto_sleep: bool,
-    /// Wakeup prepared flag (set after sleep, cleared on activity)
-    pub f_wakeup_prepare: bool,
 }
 
-impl Default for SleepManager {
+impl Default for SleepState {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl SleepManager {
-    pub fn new() -> Self {
-        Self {
-            no_act_time: 0,
-            rf_linking_time: 0,
-            usb_suspend_debounce: 0,
-            rf_disconnect_time: 0,
-            sleep_enabled: true,
-            f_goto_sleep: false,
-            f_wakeup_prepare: false,
-        }
+impl SleepState {
+    pub const fn new() -> Self {
+        Self { rf_disconnect_time: 0, delay_step_timer: 0, usb_suspend_debounce: 0 }
     }
+}
 
-    /// Called on every key event — resets inactivity timer
-    pub fn on_activity(&mut self) {
-        self.no_act_time = 0;
-    }
-
-    /// Called every 10ms (port of timer_pro increment, ansi.c:680)
-    pub fn tick_10ms(&mut self) {
-        self.no_act_time = self.no_act_time.saturating_add(1);
-        self.rf_linking_time = self.rf_linking_time.saturating_add(1);
-    }
-
-    /// Main sleep state machine — port of Sleep_Handle (sleep.c:34-113)
-    /// Called every 50ms by the main loop.
-    pub fn tick(&mut self, proto: &mut UartProtocol, usb_suspended: bool) {
-        // ── Goto-sleep transition ──
-        if self.f_goto_sleep {
-            self.f_goto_sleep = false;
-            // Guard (mirrors C Sleep_Handle): never sleep while USB is the active
-            // link and the host has NOT suspended the bus. Without this a stray
-            // CMD_24G_SUSPEND from the NRF powers the board down mid-use.
-            if proto.link_mode == LinkMode::Usb && !usb_suspended {
-                return;
-            }
-            // Tell the NRF to enter low-power mode. Unconditional once we've
-            // decided to sleep — the sleep_enable gate lives in the connected
-            // idle check below, matching C (USB-suspend / disconnect / linking
-            // timeout still sleep regardless of the user toggle, to save power).
-            if proto.rf_state == RfState::Connect {
-                proto.build_link_cmd(CMD_SET_CONFIG);
-            } else {
-                proto.build_link_cmd(CMD_SLEEP);
-            }
-            self.f_wakeup_prepare = true; // Power down handled by main.rs GPIO
-            return; // CMD sent inline by build_link_cmd → caller handles TX
-        }
-
-        // ── Wakeup transition (K1 fix: also triggered inline by uart_send_report) ──
-        let usb_wake = proto.link_mode == LinkMode::Usb && !usb_suspended;
-        if self.f_wakeup_prepare && (self.no_act_time < 10 || usb_wake) {
-            self.f_wakeup_prepare = false;
-            self.usb_suspend_debounce = 0; // Reset to prevent immediate re-sleep
-            // Power-up GPIO handled by main.rs
-            proto.build_link_cmd(CMD_HAND);
-            // USB wakeup handled by main.rs if link_mode == USB
+impl Kb {
+    /// `Sleep_Handle()`. `held_matrix`: any debounced matrix row is non-zero.
+    pub fn sleep_handle(&mut self, hal: &mut impl Hal, held_matrix: bool) {
+        /* 50ms interval */
+        if hal.now().wrapping_sub(self.sleep.delay_step_timer) < 50 {
             return;
         }
+        self.sleep.delay_step_timer = hal.now();
 
-        // Block normal checks during sleep/wakeup transitions
+        /* A held key is activity even when no new press/release report occurs.
+           USB suspend must still follow the host's power state. */
+        if self.dev_info.link_mode != LINK_USB {
+            let held = self.has_anykey() || self.has_anymod() || held_matrix;
+            if held {
+                self.no_act_time = 0;
+                self.f_goto_sleep = false;
+            }
+        }
+
+        if self.f_goto_sleep {
+            /* Guard: reject NRF sleep request when USB is active and not suspended */
+            if self.dev_info.link_mode == LINK_USB && !hal.usb_suspended() {
+                self.f_goto_sleep = false;
+                return;
+            }
+
+            self.f_goto_sleep = false;
+
+            if self.dev_info.rf_state == RF_CONNECT {
+                self.uart_send_cmd(hal, CMD_SET_CONFIG, 5, 5);
+            } else {
+                self.uart_send_cmd(hal, CMD_SLEEP, 5, 5);
+            }
+
+            // power off led
+            hal.led_power(false);
+
+            self.f_wakeup_prepare = true;
+        }
+
+        if self.f_wakeup_prepare {
+            /* Stay asleep until there is a real reason to wake:
+                 - key/activity event: process_record_kb() resets no_act_time to 0.
+                 - USB mode only: the host resumes the bus. */
+            let key_wake = self.no_act_time < 10;
+            let usb_wake = self.dev_info.link_mode == LINK_USB && !hal.usb_suspended();
+
+            if !key_wake && !usb_wake {
+                return;
+            }
+
+            self.f_wakeup_prepare = false;
+            self.sleep.usb_suspend_debounce = 0;
+            self.sleep.rf_disconnect_time = 0;
+
+            hal.led_power(true);
+
+            if self.dev_info.link_mode == LINK_USB {
+                self.uart_send_cmd(hal, CMD_HAND, 0, 1);
+            } else {
+                self.rf_wake(hal);
+            }
+            /* Only flush key state on a host-driven wake. */
+            if !key_wake {
+                self.m_break_all_key(hal);
+            }
+
+            if key_wake && self.dev_info.link_mode == LINK_USB && hal.usb_suspended() && hal.usb_remote_wakeup_enabled() {
+                /* The USB driver owns the resume pulse. */
+                hal.usb_wakeup_host();
+            }
+        }
+
         if self.f_goto_sleep || self.f_wakeup_prepare {
             return;
         }
 
-        // ── Normal operation: check sleep conditions ──
-        match proto.link_mode {
-            LinkMode::Usb => {
-                if usb_suspended {
-                    self.usb_suspend_debounce += 1;
-                    if self.usb_suspend_debounce >= 20 {
-                        self.f_goto_sleep = true;
-                    }
-                } else {
-                    self.usb_suspend_debounce = 0;
+        if self.dev_info.link_mode == LINK_USB {
+            if hal.usb_suspended() {
+                self.sleep.usb_suspend_debounce += 1;
+                if self.sleep.usb_suspend_debounce >= 20 {
+                    self.f_goto_sleep = true;
                 }
+            } else {
+                self.sleep.usb_suspend_debounce = 0;
             }
-            _ => {
-                // Wireless mode
-                if proto.rf_state == RfState::Connect {
-                    self.rf_disconnect_time = 0;
-                    self.rf_linking_time = 0;
-                    // sleep_enable gates ONLY the connected-idle sleep (matches C).
-                    if self.sleep_enabled && self.no_act_time >= SLEEP_TIME_DELAY {
-                        self.f_goto_sleep = true;
-                    }
-                } else if proto.rf_state == RfState::Linking || proto.rf_state == RfState::Pairing {
-                    if self.rf_linking_time >= LINK_TIMEOUT {
-                        self.rf_linking_time = 0;
-                        self.f_goto_sleep = true;
-                    }
-                } else if proto.rf_state == RfState::Disconnect {
-                    self.rf_linking_time = 0;
-                    self.rf_disconnect_time += 1;
-                    if self.rf_disconnect_time > 5 * 20 {
-                        self.rf_disconnect_time = 0;
-                        self.f_goto_sleep = true;
-                    }
-                } else {
-                    self.rf_linking_time = 0;
-                }
+        } else if self.dev_info.rf_state == RF_CONNECT {
+            self.sleep.rf_disconnect_time = 0;
+            if self.user_config.sleep_enable && self.no_act_time >= SLEEP_TIME_DELAY {
+                self.f_goto_sleep = true;
+            }
+        } else if self.rf_linking_time >= LINK_TIMEOUT {
+            self.rf_linking_time = 0;
+            self.f_goto_sleep = true;
+        } else if self.dev_info.rf_state == RF_DISCONNECT {
+            self.sleep.rf_disconnect_time += 1;
+            if self.sleep.rf_disconnect_time > 5 * 20 {
+                self.sleep.rf_disconnect_time = 0;
+                self.f_goto_sleep = true;
             }
         }
     }

@@ -1,29 +1,36 @@
-//! Side LED animations — full port of side.c
+//! Side light bars and indicators — 1:1 port of `keyboards/air96_v2/ansi/side.c`.
 //!
-//! 10 side LEDs (5 left + 5 right) at RGB matrix indices 100-109.
-//! 5 modes: Wave, Mix (spectrum), Static, Breath, Off.
-//! Includes battery indicator, system switch indicator, sleep indicator,
-//! RF link indicator, and Caps Lock indicator.
-#![allow(clippy::needless_range_loop)]
-#![allow(unused_parens)]
-#![allow(clippy::if_same_then_else)]
-#![allow(dead_code)]
+//! The ten side LEDs are RGB matrix indices 100..109 (left bar 100..104,
+//! right bar 105..109) and are written into the shared RGB buffer, as
+//! `rgb_matrix_set_color()` does in C.
 
-use crate::wireless::uart::{UartProtocol, LinkMode, RfState};
+use crate::hal::Hal;
+use crate::kb::*;
+use crate::led::side_tables::*;
 
-// ── Mode constants ────────────────────────────────────────────────────
 pub const SIDE_WAVE: u8 = 0;
 pub const SIDE_MIX: u8 = 1;
 pub const SIDE_STATIC: u8 = 2;
 pub const SIDE_BREATH: u8 = 3;
 pub const SIDE_OFF: u8 = 4;
 
-// LED indices
-const SIDE_INDEX: usize = 100;
+const LIGHT_COLOUR_MAX: u8 = 8;
+const LIGHT_SPEED_MAX: u8 = 4;
+const SIDE_BLINK_LIGHT: u8 = 128;
 const SIDE_LINE: usize = 5;
+const SIDE_INDEX: usize = 100;
 
-// Left/right LED index pairs (port of side_led_index_tab[5][2])
-const SIDE_LED_INDICES: [[usize; 2]; 5] = [
+const SIDE_SPEED_TABLE: [[u8; 5]; 5] = [
+    [14, 19, 25, 32, 40], // SIDE_WAVE
+    [14, 19, 25, 32, 40], // SIDE_MIX
+    [50, 50, 50, 50, 50], // SIDE_STATIC
+    [14, 19, 25, 32, 40], // SIDE_BREATH
+    [50, 50, 50, 50, 50], // SIDE_OFF
+];
+
+const SIDE_LIGHT_TABLE: [u8; 6] = [0, 32, 64, 96, 128, 160];
+
+const SIDE_LED_INDEX_TAB: [[usize; 2]; SIDE_LINE] = [
     [SIDE_INDEX + 4, SIDE_INDEX + 5],
     [SIDE_INDEX + 3, SIDE_INDEX + 6],
     [SIDE_INDEX + 2, SIDE_INDEX + 7],
@@ -31,575 +38,636 @@ const SIDE_LED_INDICES: [[usize; 2]; 5] = [
     [SIDE_INDEX, SIDE_INDEX + 9],
 ];
 
-// ── Colour library (port of colour_lib[9][3] from side.h) ─────────────
-pub const COLOUR_LIB: [[u8; 3]; 9] = [
-    [0xFF, 0x00, 0x00], // 0: Red
-    [0xFF, 0x40, 0x00], // 1: Orange
-    [0xFF, 0xFF, 0x00], // 2: Yellow
-    [0x00, 0xFF, 0x00], // 3: Green
-    [0x00, 0xFF, 0xFF], // 4: Cyan
-    [0x00, 0x00, 0xFF], // 5: Blue
-    [0x80, 0x00, 0xFF], // 6: Purple
-    [0xC0, 0xC0, 0xFF], // 7: Lavender
-    [0x00, 0x00, 0x00], // 8: Black/Off
-];
+const RF_LED_LINK_PERIOD: u32 = 500;
+const RF_LED_PAIR_PERIOD: u32 = 250;
 
-// ── Light value table (port of light_value_tab[101] from side.h) ──────
-const LIGHT_VALUE_TAB: [u8; 101] = [
-    0, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-    33, 34, 36, 37, 39, 40, 42, 43, 45, 47, 49, 51,
-    53, 55, 57, 59, 61, 63, 65, 67, 69, 71, 73, 75,
-    77, 79, 81, 83, 85, 87, 89, 91, 94, 96, 99, 101,
-    104, 106, 109, 111, 114, 116, 119, 121, 124, 126, 129, 131,
-    134, 137, 140, 143, 146, 149, 152, 155, 158, 161, 164, 167,
-    170, 173, 176, 179, 182, 185, 188, 191, 194, 197, 200, 203,
-    206, 209, 213, 216, 220, 223, 227, 230, 234, 237, 241, 245,
-    248, 251, 255, 255, 255,
-];
-
-const SIDE_LIGHT_TABLE: [u8; 6] = [0, 32, 64, 96, 128, 160];
-const SIDE_SPEED_TABLE: [[u8; 5]; 5] = [
-    [14, 19, 25, 32, 40],
-    [14, 19, 25, 32, 40],
-    [50, 50, 50, 50, 50],
-    [14, 19, 25, 32, 40],
-    [50, 50, 50, 50, 50],
-];
-
-const BREATHE_TAB_LEN: usize = 128;
-const BREATHE_TAB: [u8; BREATHE_TAB_LEN] = [
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20,
-    22, 24, 27, 30, 33, 36, 39, 42, 45, 49, 53, 57, 61, 65, 69, 73,
-    77, 81, 85, 89, 94, 99, 104, 109, 114, 119, 124, 129, 134, 140, 146, 152,
-    158, 164, 170, 176, 182, 188, 194, 200, 206, 213, 220, 227, 234, 241, 248, 255,
-    255, 248, 241, 234, 227, 220, 213, 206, 200, 194, 188, 182, 176, 170, 164, 158,
-    152, 146, 140, 134, 129, 124, 119, 114, 109, 104, 99, 94, 89, 85, 81, 77,
-    73, 69, 65, 61, 57, 53, 49, 45, 42, 39, 36, 33, 30, 27, 24, 22,
-    20, 18, 16, 14, 12, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
-];
-
-// ── Wave data table (port of wave_data_tab[112] from side.h) ──────────
-const WAVE_TAB_LEN: usize = 112;
-const WAVE_DATA_TAB: [u8; WAVE_TAB_LEN] = [
-    22, 23, 24, 25, 27, 28, 30, 31,
-    33, 34, 36, 37, 39, 40, 42, 43,
-    45, 47, 49, 51, 53, 55, 57, 59,
-    61, 63, 65, 76, 69, 71, 73, 75,
-    77, 81, 85, 89, 94, 99, 104, 109,
-    114, 119, 124, 129, 134, 140, 146, 152,
-    158, 164, 170, 176, 182, 188, 194, 200,
-    206, 213, 220, 227, 234, 241, 248, 255,
-    255, 248, 241, 234, 227, 220, 213, 206,
-    200, 194, 188, 182, 176, 170, 164, 158,
-    152, 146, 140, 134, 129, 124, 119, 114,
-    109, 104, 99, 94, 89, 85, 81, 77,
-    73, 69, 65, 61, 57, 53, 49, 45,
-    42, 39, 36, 33, 30, 27, 24, 22,
-];
-
-// ── Flow rainbow colour table (port of flow_rainbow_colour_tab[224][3] from side.h) ─
-const FLOW_COLOUR_TAB_LEN: usize = 224;
-const FLOW_RAINBOW_COLOUR_TAB: [[u8; 3]; FLOW_COLOUR_TAB_LEN] = [
-    [255, 8, 8], [255, 8, 8], [255, 8, 8], [255, 8, 8],
-    [255, 10, 8], [255, 14, 8], [255, 18, 8], [255, 22, 8],
-    [255, 26, 8], [255, 32, 8], [255, 38, 8], [255, 44, 8],
-    [255, 50, 8], [255, 57, 8], [255, 65, 8], [255, 73, 8],
-    [255, 81, 8], [255, 89, 8], [255, 99, 8], [255, 109, 8],
-    [255, 119, 8], [255, 129, 8], [255, 140, 8], [255, 152, 8],
-    [255, 164, 8], [255, 176, 8], [255, 188, 8], [255, 200, 8],
-    [255, 213, 8], [255, 227, 8], [255, 241, 8], [255, 255, 8],
-    [248, 255, 8], [234, 255, 8], [220, 255, 8], [206, 255, 8],
-    [194, 255, 8], [182, 255, 8], [170, 255, 8], [158, 255, 8],
-    [146, 255, 8], [134, 255, 8], [124, 255, 8], [114, 255, 8],
-    [104, 255, 8], [94, 255, 8], [85, 255, 8], [77, 255, 8],
-    [69, 255, 8], [61, 255, 8], [53, 255, 8], [47, 255, 8],
-    [41, 255, 8], [35, 255, 8], [29, 255, 8], [24, 255, 8],
-    [20, 255, 8], [16, 255, 8], [12, 255, 8], [8, 255, 8],
-    [8, 255, 8], [8, 255, 8], [8, 255, 8], [8, 255, 8],
-    [8, 255, 8], [8, 255, 8], [8, 255, 8], [8, 255, 8],
-    [8, 255, 10], [8, 255, 14], [8, 255, 18], [8, 255, 22],
-    [8, 255, 26], [8, 255, 32], [8, 255, 38], [8, 255, 44],
-    [8, 255, 50], [8, 255, 57], [8, 255, 65], [8, 255, 73],
-    [8, 255, 81], [8, 255, 89], [8, 255, 99], [8, 255, 109],
-    [8, 255, 119], [8, 255, 129], [8, 255, 140], [8, 255, 152],
-    [8, 255, 164], [8, 255, 176], [8, 255, 188], [8, 255, 200],
-    [8, 255, 213], [8, 255, 227], [8, 255, 241], [8, 255, 255],
-    [8, 248, 255], [8, 234, 255], [8, 220, 255], [8, 206, 255],
-    [8, 194, 255], [8, 182, 255], [8, 170, 255], [8, 158, 255],
-    [8, 146, 255], [8, 134, 255], [8, 124, 255], [8, 114, 255],
-    [8, 104, 255], [8, 94, 255], [8, 85, 255], [8, 77, 255],
-    [8, 69, 255], [8, 61, 255], [8, 53, 255], [8, 47, 255],
-    [8, 41, 255], [8, 35, 255], [8, 29, 255], [8, 24, 255],
-    [8, 20, 255], [8, 16, 255], [8, 12, 255], [8, 8, 255],
-    [8, 8, 255], [8, 8, 255], [8, 8, 255], [8, 8, 255],
-    [8, 8, 255], [8, 8, 255], [8, 8, 255], [8, 8, 255],
-    [10, 8, 255], [14, 8, 255], [18, 8, 255], [22, 8, 255],
-    [26, 8, 255], [32, 8, 255], [38, 8, 255], [44, 8, 255],
-    [50, 8, 255], [57, 8, 255], [65, 8, 255], [73, 8, 255],
-    [81, 8, 255], [89, 8, 255], [99, 8, 255], [109, 8, 255],
-    [119, 8, 255], [129, 8, 255], [140, 8, 255], [152, 8, 255],
-    [164, 8, 255], [176, 8, 255], [188, 8, 255], [200, 8, 255],
-    [213, 8, 255], [227, 8, 255], [241, 8, 255], [255, 8, 255],
-    [255, 8, 255], [255, 8, 255], [255, 8, 255], [255, 8, 255],
-    [255, 10, 255], [255, 14, 255], [255, 18, 255], [255, 22, 255],
-    [255, 26, 255], [255, 32, 255], [255, 38, 255], [255, 44, 255],
-    [255, 50, 255], [255, 57, 255], [255, 65, 255], [255, 73, 255],
-    [255, 81, 255], [255, 89, 255], [255, 99, 255], [255, 109, 255],
-    [255, 119, 255], [255, 129, 255], [255, 140, 255], [255, 152, 255],
-    [255, 164, 255], [255, 176, 255], [255, 188, 255], [255, 200, 255],
-    [255, 213, 255], [255, 227, 255], [255, 241, 255], [255, 255, 255],
-    [255, 248, 248], [255, 234, 234], [255, 220, 220], [255, 206, 206],
-    [255, 194, 194], [255, 182, 182], [255, 170, 170], [255, 158, 158],
-    [255, 146, 146], [255, 134, 134], [255, 124, 124], [255, 114, 114],
-    [255, 104, 104], [255, 94, 94], [255, 85, 85], [255, 77, 77],
-    [255, 69, 69], [255, 61, 61], [255, 53, 53], [255, 47, 47],
-    [255, 41, 41], [255, 35, 35], [255, 29, 29], [255, 24, 24],
-    [255, 20, 20], [255, 16, 16], [255, 12, 12], [255, 8, 8],
-    [255, 8, 8], [255, 8, 8], [255, 8, 8], [255, 8, 8],
-];
-
-// ── Side LED state ────────────────────────────────────────────────────
-pub struct SideLeds {
-    pub mode: u8,
-    pub brightness: u8,
-    pub speed: u8,
-    pub colour: u8,
-    pub rgb_enabled: bool,
-
-    play_point: u8,
-    pub(crate) play_cnt: u8,
-    play_timer: u32,
-
-    /// f_bat_hold 10s auto-clear timer (port of side.c:817-830)
-    /// Tracks rising edge of f_bat_hold; clears the flag after 10s of continuous hold.
-    f_bat_hold_prev: bool,
-    f_bat_hold_timer: u32,
-
-    // Breath mode persistent play_point (port of static uint8_t in C)
-    breath_play_point: u8,
-
-    // Battery indicator state
+/// side.c globals and function-local statics.
+pub struct SideState {
+    pub side_mode: u8,
+    pub side_light: u8,
+    pub side_speed: u8,
+    pub side_rgb: u8,
+    pub side_colour: u8,
+    pub side_play_point: u8,
+    pub side_play_cnt: u16,
+    pub side_play_timer: u32,
+    r_temp: u8,
+    g_temp: u8,
+    b_temp: u8,
+    sys_show_timer: u32,
+    sys_show_flag: bool,
+    sleep_show_timer: u32,
+    sleep_show_flag: bool,
+    breathe_play_point: u8,
+    rf_blink_timer: u32,
+    bat_play_point: u8,
+    bat_play_timer: u32,
+    bat_show_time: u32,
     bat_show_flag: bool,
     bat_show_breath: bool,
-    bat_play_timer: u32,
-    bat_play_point: u8,
-    bat_show_time: u32,
     bat_sts_debounce: u32,
     bat_per_debounce: u32,
     charge_state: u8,
     bat_percent: u8,
-    bat_init: bool,
-    /// Rising-edge latch for the "charge reached 0x03 (full)" breath.
-    /// Set to true the first tick the firmware sees 0x03, reset on
-    /// leaving 0x03. Prevents the 5s show-timeout from clearing
-    /// `bat_show_flag` before the breath has had a chance to start.
+    bat_f_init: bool,
     bat_full_shown: bool,
-
-    // RF link blink
-    rf_blink_cnt: u8,
-    rf_blink_timer: u32,
-    pub rf_link_show_time: u16,
-    pub link_state_temp: u8,
-
-    // System/sleep show flags
-    sys_show_flag: bool,
-    sys_show_timer: u32,
-    sleep_show_flag: bool,
-    sleep_show_timer: u32,
-    sleep_enabled: bool,
-
-    /// Output buffer: per-LED RGB to be written to the RGB matrix
-    pub output: [[u8; 3]; 10],
+    bat_end_led: u8,
+    bat_r: u8,
+    bat_g: u8,
+    bat_b: u8,
+    f_bat_hold_prev: bool,
+    f_bat_hold_timer: u32,
 }
 
-impl Default for SideLeds {
+impl Default for SideState {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl SideLeds {
-    pub fn new() -> Self {
+impl SideState {
+    pub const fn new() -> Self {
         Self {
-            mode: SIDE_WAVE, brightness: 3, speed: 2, colour: 0, rgb_enabled: true,
-            play_point: 0, play_cnt: 0, play_timer: 0,
-            f_bat_hold_prev: false, f_bat_hold_timer: 0,
-            breath_play_point: 0,
-            bat_show_flag: true, bat_show_breath: false, bat_play_timer: 0, bat_play_point: 0,
-            bat_show_time: 0, bat_sts_debounce: 0, bat_per_debounce: 0,
-            charge_state: 0, bat_percent: 100, bat_init: true,
+            side_mode: 0,
+            side_light: 3,
+            side_speed: 2,
+            side_rgb: 1,
+            side_colour: 0,
+            side_play_point: 0,
+            side_play_cnt: 0,
+            side_play_timer: 0,
+            r_temp: 0,
+            g_temp: 0,
+            b_temp: 0,
+            sys_show_timer: 0,
+            sys_show_flag: false,
+            sleep_show_timer: 0,
+            sleep_show_flag: false,
+            breathe_play_point: 0,
+            rf_blink_timer: 0,
+            bat_play_point: 0,
+            bat_play_timer: 0,
+            bat_show_time: 0,
+            bat_show_flag: true,
+            bat_show_breath: false,
+            bat_sts_debounce: 0,
+            bat_per_debounce: 0,
+            charge_state: 0,
+            bat_percent: 0,
+            bat_f_init: true,
             bat_full_shown: false,
-            rf_blink_cnt: 0, rf_blink_timer: 0, rf_link_show_time: 0,
-            link_state_temp: 0xFF,
-            sys_show_flag: false, sys_show_timer: 0,
-            sleep_show_flag: false, sleep_show_timer: 0, sleep_enabled: true,
-            output: [[0; 3]; 10],
+            bat_end_led: 0,
+            bat_r: 0,
+            bat_g: 0,
+            bat_b: 0,
+            f_bat_hold_prev: false,
+            f_bat_hold_timer: 0,
         }
     }
 
-    /// Set left side LEDs (indices 0-4)
-    fn set_left(&mut self, r: u8, g: u8, b: u8) {
-        for i in 0..5 { self.output[i] = [r, g, b]; }
+    /// `count_rgb_light()`.
+    fn count_rgb_light(&mut self, light_temp: u8) {
+        let l = light_temp as u16;
+        self.r_temp = ((l * self.r_temp as u16 + self.r_temp as u16) >> 8) as u8;
+        self.g_temp = ((l * self.g_temp as u16 + self.g_temp as u16) >> 8) as u8;
+        self.b_temp = ((l * self.b_temp as u16 + self.b_temp as u16) >> 8) as u8;
     }
 
-    /// Set right side LEDs (indices 5-9)
-    fn set_right(&mut self, r: u8, g: u8, b: u8) {
-        for i in 5..10 { self.output[i] = [r, g, b]; }
+    fn set_temp(&mut self, rgb: [u8; 3]) {
+        self.r_temp = rgb[0];
+        self.g_temp = rgb[1];
+        self.b_temp = rgb[2];
     }
 
-    /// Apply brightness scaling (port of count_rgb_light, side.c:334-346)
-    /// C formula: component * (light_temp + 1) >> 8
-    fn apply_light(r: u8, g: u8, b: u8, light_temp: u8) -> (u8, u8, u8) {
-        let scale = (light_temp as u16 + 1);
-        (((r as u16 * scale) >> 8) as u8,
-         ((g as u16 * scale) >> 8) as u8,
-         ((b as u16 * scale) >> 8) as u8)
+    /// Shared prologue of every `side_*_mode_show()`: run once per speed tick.
+    fn play_tick(&mut self) -> bool {
+        let step = SIDE_SPEED_TABLE[self.side_mode as usize][self.side_speed as usize] as u16;
+        if self.side_play_cnt <= step {
+            return false;
+        }
+        self.side_play_cnt -= step;
+        if self.side_play_cnt > 20 {
+            self.side_play_cnt = 0;
+        }
+        true
     }
+}
 
-    /// Point advance helper (port of light_point_playing)
-    fn advance_point(point: &mut u8, step: u8, len: usize, forward: bool) {
-        if forward {
-            *point = ((*point as usize + step as usize) % len) as u8;
+/// `light_point_playing()`.
+fn light_point_playing(trend: bool, step: u8, len: u8, point: &mut u8) {
+    if trend {
+        *point = point.wrapping_add(step);
+        if *point >= len {
+            *point -= len;
+        }
+    } else if *point < step {
+        *point = len - (step - *point);
+    } else {
+        *point -= step;
+    }
+}
+
+impl Kb {
+    /// `light_level_control()`.
+    pub fn light_level_control(&mut self, hal: &mut impl Hal, brighten: bool) {
+        if brighten {
+            if self.side.side_light == 5 {
+                return;
+            }
+            self.side.side_light += 1;
         } else {
-            let new = (*point as i16) - (step as i16);
-            *point = if new < 0 { ((new + len as i16) % len as i16) as u8 } else { new as u8 };
+            if self.side.side_light == 0 {
+                return;
+            }
+            self.side.side_light -= 1;
         }
+        self.user_config.ee_side_light = self.side.side_light;
+        self.eeconfig_update_user_datablock(hal);
     }
 
-    // ── Wave mode (port of side_wave_mode_show) ───────────────────────
-    fn wave_show(&mut self) {
-        let speed = SIDE_SPEED_TABLE[SIDE_WAVE as usize][self.speed as usize];
-        if self.play_cnt <= speed { return; }
-        self.play_cnt -= speed;
-        if self.play_cnt > 20 { self.play_cnt = 0; }
+    /// `light_speed_control()`: lower side_speed = faster animation.
+    pub fn light_speed_control(&mut self, hal: &mut impl Hal, fast: bool) {
+        if self.side.side_speed > LIGHT_SPEED_MAX {
+            self.side.side_speed = LIGHT_SPEED_MAX / 2;
+        }
+        if fast {
+            if self.side.side_speed != 0 {
+                self.side.side_speed -= 1;
+            }
+        } else if self.side.side_speed < LIGHT_SPEED_MAX {
+            self.side.side_speed += 1;
+        }
+        self.user_config.ee_side_speed = self.side.side_speed;
+        self.eeconfig_update_user_datablock(hal);
+    }
 
-        if self.rgb_enabled {
-            Self::advance_point(&mut self.play_point, 3, FLOW_COLOUR_TAB_LEN, false);
-        } else {
-            Self::advance_point(&mut self.play_point, 2, WAVE_TAB_LEN, false);
+    /// `side_colour_control()`.
+    pub fn side_colour_control(&mut self, hal: &mut impl Hal, dir: bool) {
+        let s = &mut self.side;
+        if s.side_mode != SIDE_WAVE && s.side_rgb != 0 {
+            s.side_rgb = 0;
+            s.side_colour = 0;
         }
 
-        let mut play_idx = self.play_point;
-        for i in 0..SIDE_LINE {
-            if self.rgb_enabled {
-                // Use exact FLOW_RAINBOW_COLOUR_TAB (port of H7 fix)
-                let col = FLOW_RAINBOW_COLOUR_TAB[play_idx as usize];
-                Self::advance_point(&mut play_idx, 16, FLOW_COLOUR_TAB_LEN, true);
-                let (r, g, b) = Self::apply_light(col[0], col[1], col[2], SIDE_LIGHT_TABLE[self.brightness as usize]);
-                for j in 0..2 {
-                    self.output[SIDE_LED_INDICES[i][j] - SIDE_INDEX] = [r, g, b];
-                }
+        if dir {
+            if s.side_rgb != 0 {
+                s.side_rgb = 0;
+                s.side_colour = 0;
             } else {
-                // Single colour with wave intensity modulation (port of H8 fix)
-                let col = COLOUR_LIB[self.colour as usize];
-                let wave_val = WAVE_DATA_TAB[play_idx as usize];
-                let (r, g, b) = Self::apply_light(col[0], col[1], col[2], wave_val);
-                Self::advance_point(&mut play_idx, 12, WAVE_TAB_LEN, true);
-                let (r, g, b) = Self::apply_light(r, g, b, SIDE_LIGHT_TABLE[self.brightness as usize]);
-                for j in 0..2 {
-                    self.output[SIDE_LED_INDICES[i][j] - SIDE_INDEX] = [r, g, b];
+                s.side_colour += 1;
+                if s.side_colour >= LIGHT_COLOUR_MAX {
+                    s.side_rgb = 1;
+                    s.side_colour = 0;
                 }
             }
+        } else if s.side_rgb != 0 {
+            s.side_rgb = 0;
+            s.side_colour = LIGHT_COLOUR_MAX - 1;
+        } else if s.side_colour == 0 {
+            s.side_rgb = 1;
+            s.side_colour = 0;
+        } else {
+            s.side_colour -= 1;
+        }
+        self.user_config.ee_side_rgb = self.side.side_rgb;
+        self.user_config.ee_side_colour = self.side.side_colour;
+        self.eeconfig_update_user_datablock(hal);
+    }
+
+    /// `side_mode_control()`.
+    pub fn side_mode_control(&mut self, hal: &mut impl Hal, dir: bool) {
+        let s = &mut self.side;
+        if dir {
+            s.side_mode += 1;
+            if s.side_mode > SIDE_OFF {
+                s.side_mode = 0;
+            }
+        } else if s.side_mode > 0 {
+            s.side_mode -= 1;
+        } else {
+            s.side_mode = SIDE_OFF;
+        }
+        s.side_play_point = 0;
+        self.user_config.ee_side_mode = self.side.side_mode;
+        self.eeconfig_update_user_datablock(hal);
+    }
+
+    fn set_left_rgb(&mut self, r: u8, g: u8, b: u8) {
+        for i in 0..SIDE_LINE {
+            self.rgb.set_color(SIDE_INDEX + i, r, g, b);
         }
     }
 
-    // ── Mix/Spectrum mode (port of side_spectrum_mode_show) ───────────
-    fn mix_show(&mut self) {
-        let speed = SIDE_SPEED_TABLE[SIDE_MIX as usize][self.speed as usize];
-        if self.play_cnt <= speed { return; }
-        self.play_cnt -= speed;
-        if self.play_cnt > 20 { self.play_cnt = 0; }
-
-        Self::advance_point(&mut self.play_point, 1, FLOW_COLOUR_TAB_LEN, true);
-        // Use exact FLOW_RAINBOW_COLOUR_TAB (H7 fix)
-        let col = FLOW_RAINBOW_COLOUR_TAB[self.play_point as usize];
-        let (r, g, b) = Self::apply_light(col[0], col[1], col[2], SIDE_LIGHT_TABLE[self.brightness as usize]);
-        self.set_left(r, g, b);
-        self.set_right(r, g, b);
+    fn set_right_rgb(&mut self, r: u8, g: u8, b: u8) {
+        for i in 0..SIDE_LINE {
+            self.rgb.set_color(SIDE_INDEX + SIDE_LINE + i, r, g, b);
+        }
     }
 
-    // ── Breath mode (port of side_breathe_mode_show, B4 dead code removed) ─
-    fn breath_show(&mut self) {
-        let speed = SIDE_SPEED_TABLE[SIDE_BREATH as usize][self.speed as usize];
-        if self.play_cnt <= speed { return; }
-        self.play_cnt -= speed;
-        if self.play_cnt > 20 { self.play_cnt = 0; }
+    fn set_side_temp(&mut self, i: usize) {
+        let (r, g, b) = (self.side.r_temp, self.side.g_temp, self.side.b_temp);
+        for j in 0..2 {
+            self.rgb.set_color(SIDE_LED_INDEX_TAB[i][j], r, g, b);
+        }
+    }
 
-        // M17 fix: use persistent breath_play_point (was fresh local)
-        Self::advance_point(&mut self.breath_play_point, 1, BREATHE_TAB_LEN, false);
+    /// `sys_sw_led_show()`.
+    fn sys_sw_led_show(&mut self, hal: &impl Hal) {
+        if self.f_sys_show {
+            self.f_sys_show = false;
+            self.side.sys_show_timer = hal.now();
+            self.side.sys_show_flag = true;
+        }
 
-        let col = COLOUR_LIB[self.colour as usize];
-        let (r, g, b) = Self::apply_light(col[0], col[1], col[2], BREATHE_TAB[self.breath_play_point as usize]);
-        let (r, g, b) = Self::apply_light(r, g, b, SIDE_LIGHT_TABLE[self.brightness as usize]);
-        for i in 0..SIDE_LINE {
-            for j in 0..2 {
-                self.output[SIDE_LED_INDICES[i][j] - SIDE_INDEX] = [r, g, b];
+        if self.side.sys_show_flag {
+            let c = if self.dev_info.sys_sw_state == SYS_SW_MAC {
+                [SIDE_BLINK_LIGHT, SIDE_BLINK_LIGHT, SIDE_BLINK_LIGHT]
+            } else {
+                [0x00, 0x00, SIDE_BLINK_LIGHT]
+            };
+            self.side.set_temp(c);
+            let elapsed = hal.now().wrapping_sub(self.side.sys_show_timer);
+            if (elapsed / 500) % 2 == 0 {
+                self.set_right_rgb(c[0], c[1], c[2]);
+            } else {
+                self.set_right_rgb(0, 0, 0);
+            }
+            if elapsed >= 3000 {
+                self.side.sys_show_flag = false;
             }
         }
     }
 
-    // ── Static mode (port of side_static_mode_show, B4 dead code removed) ─
-    fn static_show(&mut self) {
-        let speed = SIDE_SPEED_TABLE[SIDE_STATIC as usize][self.speed as usize];
-        if self.play_cnt <= speed { return; }
-        self.play_cnt -= speed;
-        if self.play_cnt > 20 { self.play_cnt = 0; }
+    /// `sleep_sw_led_show()`.
+    fn sleep_sw_led_show(&mut self, hal: &impl Hal) {
+        if self.f_sleep_show {
+            self.f_sleep_show = false;
+            self.side.sleep_show_timer = hal.now();
+            self.side.sleep_show_flag = true;
+        }
 
-        let col = COLOUR_LIB[self.colour as usize];
-        let (r, g, b) = Self::apply_light(col[0], col[1], col[2], SIDE_LIGHT_TABLE[self.brightness as usize]);
-        self.set_left(r, g, b);
-        self.set_right(r, g, b);
+        if self.side.sleep_show_flag {
+            let c = if self.user_config.sleep_enable {
+                [0x00, SIDE_BLINK_LIGHT, 0x00]
+            } else {
+                [SIDE_BLINK_LIGHT, 0x00, 0x00]
+            };
+            self.side.set_temp(c);
+            let elapsed = hal.now().wrapping_sub(self.side.sleep_show_timer);
+            if (elapsed / 500) % 2 == 0 {
+                self.set_right_rgb(c[0], c[1], c[2]);
+            } else {
+                self.set_right_rgb(0, 0, 0);
+            }
+            if elapsed >= 3000 {
+                self.side.sleep_show_flag = false;
+            }
+        }
     }
 
-    // ── Off mode ──────────────────────────────────────────────────────
-    fn off_show(&mut self) {
-        let speed = SIDE_SPEED_TABLE[SIDE_OFF as usize][self.speed as usize];
-        if self.play_cnt <= speed { return; }
-        self.play_cnt -= speed;
-        if self.play_cnt > 20 { self.play_cnt = 0; }
-        self.set_left(0, 0, 0);
-        self.set_right(0, 0, 0);
-    }
-
-    // ── RF link LED indicator (port of rf_led_show, B1 fix applied) ──
-    fn rf_led_show(&mut self, proto: &UartProtocol) {
-        const RF_LED_LINK_PERIOD: u32 = 500;
-        const RF_LED_PAIR_PERIOD: u32 = 250;
-
-        let (r, g, b) = match proto.link_mode {
-            LinkMode::Rf24 => (0x00, 0x80, 0x00),       // Green
-            LinkMode::Usb  => (0x80, 0x80, 0x00),       // Yellow
-            _              => (0x00, 0x00, 0x80),       // Blue
+    /// `sys_led_show()`: host Caps Lock on the left bar.
+    fn sys_led_show(&mut self, hal: &impl Hal) {
+        let caps = if self.dev_info.link_mode == LINK_USB {
+            self.host_keyboard_leds(hal) & 0x02 != 0
+        } else {
+            self.dev_info.rf_led & 0x02 != 0
         };
-        let mut out_r = r;
-        let mut out_g = g;
-        let mut out_b = b;
+        if caps {
+            self.set_left_rgb(0x00, SIDE_BLINK_LIGHT, SIDE_BLINK_LIGHT);
+        }
+    }
 
-        if self.rf_blink_cnt > 0 {
-            let period = if proto.rf_state == RfState::Pairing { RF_LED_PAIR_PERIOD } else { RF_LED_LINK_PERIOD };
-            if self.rf_blink_timer < period / 2 {
-                // LED on (first half)
+    /// `side_wave_mode_show()`.
+    fn side_wave_mode_show(&mut self) {
+        if !self.side.play_tick() {
+            return;
+        }
+        let rainbow = self.side.side_rgb != 0;
+        if rainbow {
+            light_point_playing(false, 3, FLOW_COLOUR_TAB_LEN as u8, &mut self.side.side_play_point);
+        } else {
+            light_point_playing(false, 2, WAVE_TAB_LEN as u8, &mut self.side.side_play_point);
+        }
+
+        let mut play_index = self.side.side_play_point;
+        for i in 0..SIDE_LINE {
+            if rainbow {
+                self.side.set_temp(FLOW_RAINBOW_COLOUR_TAB[play_index as usize]);
+                light_point_playing(true, 16, FLOW_COLOUR_TAB_LEN as u8, &mut play_index);
             } else {
-                out_r = 0; out_g = 0; out_b = 0;
+                self.side.set_temp(COLOUR_LIB[self.side.side_colour as usize]);
+                light_point_playing(true, 12, WAVE_TAB_LEN as u8, &mut play_index);
+                self.side.count_rgb_light(WAVE_DATA_TAB[play_index as usize]);
             }
-            if self.rf_blink_timer >= period {
+            self.side.count_rgb_light(SIDE_LIGHT_TABLE[self.side.side_light as usize]);
+            self.set_side_temp(i);
+        }
+    }
+
+    /// `side_spectrum_mode_show()`.
+    fn side_spectrum_mode_show(&mut self) {
+        if !self.side.play_tick() {
+            return;
+        }
+        light_point_playing(true, 1, FLOW_COLOUR_TAB_LEN as u8, &mut self.side.side_play_point);
+        self.side.set_temp(FLOW_RAINBOW_COLOUR_TAB[self.side.side_play_point as usize]);
+        self.side.count_rgb_light(SIDE_LIGHT_TABLE[self.side.side_light as usize]);
+        for i in 0..SIDE_LINE {
+            self.set_side_temp(i);
+        }
+    }
+
+    /// `side_breathe_mode_show()`.
+    fn side_breathe_mode_show(&mut self) {
+        if !self.side.play_tick() {
+            return;
+        }
+        light_point_playing(false, 1, BREATHE_TAB_LEN as u8, &mut self.side.breathe_play_point);
+        self.side.set_temp(COLOUR_LIB[self.side.side_colour as usize]);
+        self.side.count_rgb_light(BREATHE_DATA_TAB[self.side.breathe_play_point as usize]);
+        self.side.count_rgb_light(SIDE_LIGHT_TABLE[self.side.side_light as usize]);
+        for i in 0..SIDE_LINE {
+            self.set_side_temp(i);
+        }
+    }
+
+    /// `side_static_mode_show()`.
+    fn side_static_mode_show(&mut self) {
+        if !self.side.play_tick() {
+            return;
+        }
+        for i in 0..SIDE_LINE {
+            self.side.set_temp(COLOUR_LIB[self.side.side_colour as usize]);
+            self.side.count_rgb_light(SIDE_LIGHT_TABLE[self.side.side_light as usize]);
+            self.set_side_temp(i);
+        }
+    }
+
+    /// `side_off_mode_show()`.
+    fn side_off_mode_show(&mut self) {
+        if !self.side.play_tick() {
+            return;
+        }
+        self.side.set_temp([0, 0, 0]);
+        for i in 0..SIDE_LINE {
+            self.set_side_temp(i);
+        }
+    }
+
+    /// `rf_led_show()`: link state on the left bar.
+    fn rf_led_show(&mut self, hal: &impl Hal) {
+        let mut c = if self.dev_info.link_mode == LINK_RF_24 {
+            [0x00, SIDE_BLINK_LIGHT, 0x00]
+        } else if self.dev_info.link_mode == LINK_USB {
+            [SIDE_BLINK_LIGHT, SIDE_BLINK_LIGHT, 0x00]
+        } else {
+            [0x00, 0x00, SIDE_BLINK_LIGHT]
+        };
+
+        if self.rf_blink_cnt != 0 {
+            let period = if self.dev_info.rf_state == RF_PAIRING { RF_LED_PAIR_PERIOD } else { RF_LED_LINK_PERIOD };
+            let elapsed = hal.now().wrapping_sub(self.side.rf_blink_timer);
+            if elapsed >= period >> 1 {
+                c = [0, 0, 0];
+            }
+            if elapsed >= period {
                 self.rf_blink_cnt -= 1;
-                self.rf_blink_timer = 0;
+                self.side.rf_blink_timer = hal.now();
             }
-        } else if self.rf_link_show_time < 3000 {
-            // Show steady after blink
+        } else if self.rf_link_show_time < RF_LINK_SHOW_TIME {
         } else {
-            return; // Don't override — let side animation show
+            self.side.rf_blink_timer = hal.now();
+            return;
         }
-        self.set_left(out_r, out_g, out_b);
+
+        self.side.set_temp(c);
+        self.set_left_rgb(c[0], c[1], c[2]);
     }
 
-    // ── Battery indicator (port of bat_led_show, B5 fix applied) ──────
-    fn bat_led_show(&mut self, proto: &UartProtocol, f_bat_hold: bool) {
-        let charge = proto.rf_charge;
-        let battery = proto.rf_battery;
-
-        if self.bat_init {
-            self.bat_init = false;
-            self.bat_show_time = 0;
-            self.charge_state = charge;
-            self.bat_percent = battery;
-        }
-
-        // Charge state changed → show indicator
-        if self.charge_state != charge {
-            if self.bat_sts_debounce > 1000 {
-                if (self.charge_state & 0x01) == 0 && (charge & 0x01) != 0 {
-                    self.bat_show_flag = true;
-                    self.bat_show_breath = true;
-                    self.bat_show_time = 0;
-                }
-                self.charge_state = charge;
-            }
+    /// `bat_num_led()`.
+    fn bat_num_led(&mut self, bat_percent: u8) {
+        let (r, g, b) = if bat_percent <= 15 {
+            (0xFF, 0x00, 0x00)
+        } else if bat_percent <= 50 {
+            (0xFF, 0x40, 0x00)
+        } else if bat_percent <= 80 {
+            (0xFF, 0xFF, 0x00)
         } else {
-            self.bat_sts_debounce = 0;
-            if self.bat_show_time > 5000 && !f_bat_hold {
-                self.bat_show_flag = false;
-                self.bat_show_breath = false;
-            }
-            // M13 fix: full charge (0x03) → breathing indicator.
-            // Latch so the 5s show-timeout above doesn't clear the flag
-            // before the breath has a chance to start. C reference: side.c:678-686.
-            if self.charge_state == 0x03 && !self.bat_full_shown {
-                self.bat_show_breath = true;
-                self.bat_show_flag = true;
-                self.bat_show_time = 0;
-                self.bat_full_shown = true;
-            } else if self.charge_state != 0x03 {
-                self.bat_full_shown = false;
-            }
-        }
-
-        // Battery percent changed
-        if self.bat_percent != battery {
-            if self.bat_per_debounce > 1000 {
-                self.bat_percent = battery;
-            }
-        } else {
-            self.bat_per_debounce = 0;
-            if self.bat_percent < 15 {
-                self.bat_show_flag = true;
-                self.bat_show_time = 0;
-            }
-        }
-
-        // Manual hold override
-        if f_bat_hold {
-            self.bat_show_flag = true;
-            self.bat_show_breath = false;
-            self.bat_show_time = 0;
-        }
-
-        if self.bat_show_flag {
-            if self.bat_show_breath {
-                if self.bat_play_timer > 10 {
-                    self.bat_play_timer = 0;
-                    Self::advance_point(&mut self.bat_play_point, 1, BREATHE_TAB_LEN, false);
-                }
-                let b = BREATHE_TAB[self.bat_play_point as usize];
-                let (r, g, _) = (0xFF, 0x40, 0x00); // Orange charging
-                let (r, g, _) = Self::apply_light(r, g, 0, b);
-                self.set_right(r, g, 0);
-            } else {
-                self.bat_percent_led(self.bat_percent);
-            }
-        }
-    }
-
-    pub(crate) fn bat_percent_led(&mut self, percent: u8) {
-        // Battery color scheme: (128,0,0) red ≤20%, (128,64,0) orange 21-50%, (0,128,0) green >50%
-        let (r, g, b) = if percent <= 20 {
-            (128, 0, 0)
-        } else if percent <= 50 {
-            (128, 64, 0)
-        } else {
-            (0, 128, 0)
+            (0x00, 0xFF, 0x00)
         };
-        let end = if percent <= 20 { 0 } else if percent <= 30 { 1 } else if percent <= 50 { 2 } else if percent <= 70 { 3 } else if percent <= 95 { 4 } else { 4 };
-        for i in 0..=end {
-            self.output[9 - i] = [r, g, b];
+
+        const BATTERY_LEDS: [usize; 10] = [29, 28, 27, 26, 25, 24, 23, 22, 21, 20];
+        if bat_percent >= 1 {
+            self.rgb.set_color(BATTERY_LEDS[0], r, g, b);
         }
-        for i in (end + 1)..SIDE_LINE {
-            self.output[9 - i] = [0, 0, 0];
+        for i in 1..10u8 {
+            if bat_percent > i * 10 {
+                self.rgb.set_color(BATTERY_LEDS[i as usize], r, g, b);
+            }
         }
     }
 
-    // ── Main update (port of m_side_led_show, side.c:829) ─────────────
-    /// elapsed_ms is the number of 1ms ticks passed since last call.
-    /// M11 fix: rf_link_show_time increments per 10ms, so divide elapsed by 10.
-    pub fn update(&mut self, proto: &UartProtocol, elapsed_ms: u32, keyboard_leds: u8, f_bat_hold: &mut bool) {
-        // ── Auto-clear f_bat_hold after 10s (port of side.c:817-830) ───
-        // The user holds the battery-show key; after 10s of continuous hold
-        // we drop the flag so the indicator doesn't stay on indefinitely.
-        if *f_bat_hold && !self.f_bat_hold_prev {
-            self.f_bat_hold_timer = 0;
+    /// `num_led_show()`.
+    pub fn num_led_show(&mut self) {
+        let num_bat_temp = self.dev_info.rf_baterry;
+        self.bat_num_led(num_bat_temp);
+    }
+
+    /// `bat_percent_led()`.
+    fn bat_percent_led(&mut self, bat_percent: u8) {
+        let s = &mut self.side;
+        let half = SIDE_BLINK_LIGHT / 2;
+        let (end, r, g, b) = if bat_percent <= 20 {
+            (0, SIDE_BLINK_LIGHT, 0, 0)
+        } else if bat_percent <= 30 {
+            (1, SIDE_BLINK_LIGHT, half, 0)
+        } else if bat_percent <= 50 {
+            (2, SIDE_BLINK_LIGHT, half, 0)
+        } else if bat_percent <= 70 {
+            (3, SIDE_BLINK_LIGHT, half, 0)
+        } else if bat_percent <= 95 {
+            (4, SIDE_BLINK_LIGHT, half, 0)
+        } else {
+            (4, 0, SIDE_BLINK_LIGHT, 0)
+        };
+        s.bat_end_led = end;
+        s.bat_r = r;
+        s.bat_g = g;
+        s.bat_b = b;
+
+        let mut i = 0usize;
+        while i <= end as usize {
+            self.rgb.set_color(SIDE_INDEX + 9 - i, r, g, b);
+            i += 1;
         }
-        self.f_bat_hold_prev = *f_bat_hold;
-        if *f_bat_hold {
-            self.f_bat_hold_timer = self.f_bat_hold_timer.saturating_add(elapsed_ms);
-            if self.f_bat_hold_timer > 10_000 {
-                *f_bat_hold = false;
+        while i < SIDE_LINE {
+            self.rgb.set_color(SIDE_INDEX + 9 - i, 0, 0, 0);
+            i += 1;
+        }
+    }
+
+    /// `bat_led_show()`: battery state on the right bar.
+    fn bat_led_show(&mut self, hal: &impl Hal) {
+        /* Skip battery indicator in wired USB mode — keep rainbow */
+        if self.dev_info.link_mode == LINK_USB {
+            return;
+        }
+        let now = hal.now();
+        let s = &mut self.side;
+
+        if s.bat_f_init {
+            s.bat_f_init = false;
+            s.bat_show_time = now;
+            s.charge_state = self.dev_info.rf_charge;
+            s.bat_percent = self.dev_info.rf_baterry;
+        }
+
+        if s.charge_state != self.dev_info.rf_charge {
+            if now.wrapping_sub(s.bat_sts_debounce) > 1000 {
+                if (s.charge_state & 0x01) == 0 && (self.dev_info.rf_charge & 0x01) != 0 {
+                    s.bat_show_flag = true;
+                    s.bat_show_breath = true;
+                    s.bat_show_time = now;
+                }
+                s.charge_state = self.dev_info.rf_charge;
+            }
+        } else {
+            s.bat_sts_debounce = now;
+            if now.wrapping_sub(s.bat_show_time) > 5000 {
+                s.bat_show_flag = false;
+                s.bat_show_breath = false;
+            }
+            if s.charge_state == 0x03 && !s.bat_full_shown {
+                s.bat_show_breath = true;
+                s.bat_show_flag = true;
+                s.bat_show_time = now;
+                s.bat_full_shown = true;
+            }
+            if s.charge_state != 0x03 {
+                s.bat_full_shown = false;
             }
         }
 
-        self.play_cnt = self.play_cnt.saturating_add(elapsed_ms as u8);
-        self.play_timer = 0;
-        self.rf_blink_timer = self.rf_blink_timer.saturating_add(elapsed_ms);
-        self.bat_play_timer = self.bat_play_timer.saturating_add(elapsed_ms);
-        self.bat_sts_debounce = self.bat_sts_debounce.saturating_add(elapsed_ms);
-        self.bat_per_debounce = self.bat_per_debounce.saturating_add(elapsed_ms);
-        self.bat_show_time = self.bat_show_time.saturating_add(elapsed_ms);
-        self.sys_show_timer = self.sys_show_timer.saturating_add(elapsed_ms);
-        self.sleep_show_timer = self.sleep_show_timer.saturating_add(elapsed_ms);
+        if s.bat_percent != self.dev_info.rf_baterry {
+            if now.wrapping_sub(s.bat_per_debounce) > 1000 {
+                s.bat_percent = self.dev_info.rf_baterry;
+            }
+        } else {
+            s.bat_per_debounce = now;
+            if s.bat_percent < 15 {
+                s.bat_show_flag = true;
+                s.bat_show_time = now;
+            }
+        }
 
-        // 1. Side animation
-        match self.mode {
-            SIDE_WAVE   => self.wave_show(),
-            SIDE_MIX    => self.mix_show(),
-            SIDE_BREATH => self.breath_show(),
-            SIDE_STATIC => self.static_show(),
-            SIDE_OFF    => self.off_show(),
+        if self.f_bat_hold || self.side.bat_show_flag {
+            if self.side.bat_show_breath {
+                if now.wrapping_sub(self.side.bat_play_timer) > 10 {
+                    self.side.bat_play_timer = now;
+                    light_point_playing(false, 1, BREATHE_TAB_LEN as u8, &mut self.side.bat_play_point);
+                }
+                self.side.set_temp([0xFF, 0x40, 0x00]);
+                self.side.count_rgb_light(BREATHE_DATA_TAB[self.side.bat_play_point as usize]);
+                let (r, g, b) = (self.side.r_temp, self.side.g_temp, self.side.b_temp);
+                self.set_right_rgb(r, g, b);
+            } else {
+                let p = self.side.bat_percent;
+                self.bat_percent_led(p);
+            }
+        }
+    }
+
+    /// `device_reset_show()`: three white blinks.
+    pub fn device_reset_show(&mut self, hal: &mut impl Hal) {
+        hal.led_power(true);
+        for _ in 0..3 {
+            self.rgb.set_all(0xFF, 0xFF, 0xFF);
+            hal.rgb_update_pwm_buffers(&mut self.rgb);
+            hal.wait_ms(200);
+
+            self.rgb.set_all(0x00, 0x00, 0x00);
+            hal.rgb_update_pwm_buffers(&mut self.rgb);
+            hal.wait_ms(200);
+        }
+    }
+
+    /// `device_reset_init()`.
+    pub fn device_reset_init(&mut self, hal: &mut impl Hal) {
+        let s = &mut self.side;
+        s.side_mode = 0;
+        s.side_light = 3;
+        s.side_speed = 2;
+        s.side_rgb = 1;
+        s.side_colour = 0;
+        s.side_play_point = 0;
+        s.side_play_cnt = 0;
+        s.side_play_timer = hal.now();
+
+        self.f_bat_hold = false;
+
+        self.rgb.enable();
+        self.rgb.set_mode(RGB_MATRIX_DEFAULT_MODE);
+        self.rgb.speed = 255 - RGB_MATRIX_SPD_STEP * 2;
+        self.rgb.sethsv_noeeprom(255, 255, RGB_MATRIX_MAXIMUM_BRIGHTNESS - RGB_MATRIX_VAL_STEP * 2);
+
+        self.user_config.default_brightness_flag = 0xA5;
+        self.user_config.ee_side_mode = self.side.side_mode;
+        self.user_config.ee_side_light = self.side.side_light;
+        self.user_config.ee_side_speed = self.side.side_speed;
+        self.user_config.ee_side_rgb = self.side.side_rgb;
+        self.user_config.ee_side_colour = self.side.side_colour;
+        self.user_config.sleep_enable = true;
+        self.eeconfig_update_user_datablock(hal);
+    }
+
+    /// `rgb_test_show()`: seven solid colours, 500ms each.
+    pub fn rgb_test_show(&mut self, hal: &mut impl Hal) {
+        hal.led_power(true);
+        const COLOURS: [[u8; 3]; 7] = [
+            [0xFF, 0x00, 0x00],
+            [0x00, 0xFF, 0x00],
+            [0x00, 0x00, 0xFF],
+            [0x80, 0x80, 0x80],
+            [0x80, 0x80, 0x00],
+            [0x80, 0x00, 0x80],
+            [0x00, 0x80, 0x80],
+        ];
+        for c in COLOURS {
+            self.rgb.set_all(c[0], c[1], c[2]);
+            hal.rgb_update_pwm_buffers(&mut self.rgb);
+            hal.wait_ms(500);
+        }
+    }
+
+    /// `m_side_led_show()`.
+    pub fn m_side_led_show(&mut self, hal: &mut impl Hal) {
+        /* Auto-clear f_bat_hold after 10 seconds */
+        if self.f_bat_hold && !self.side.f_bat_hold_prev {
+            self.side.f_bat_hold_timer = hal.now();
+        }
+        self.side.f_bat_hold_prev = self.f_bat_hold;
+        if self.f_bat_hold && hal.now().wrapping_sub(self.side.f_bat_hold_timer) > 10000 {
+            self.f_bat_hold = false;
+        }
+
+        let elapsed = hal.now().wrapping_sub(self.side.side_play_timer);
+        self.side.side_play_cnt = self.side.side_play_cnt.wrapping_add(elapsed as u16);
+        self.side.side_play_timer = hal.now();
+
+        match self.side.side_mode {
+            SIDE_WAVE => self.side_wave_mode_show(),
+            SIDE_MIX => self.side_spectrum_mode_show(),
+            SIDE_BREATH => self.side_breathe_mode_show(),
+            SIDE_STATIC => self.side_static_mode_show(),
+            SIDE_OFF => self.side_off_mode_show(),
             _ => {}
         }
 
-        // 2. Battery indicator (right side override)
-        self.bat_led_show(proto, *f_bat_hold);
+        self.bat_led_show(hal);
+        self.sleep_sw_led_show(hal);
+        self.sys_sw_led_show(hal);
 
-        // 3. System switch indicator
-        if self.sys_show_flag {
-            let (r, g, b) = if proto.sys_sw_state == 0xA2 { (0x80, 0x80, 0x80) } else { (0x00, 0x00, 0x80) };
-            if (self.sys_show_timer / 500).is_multiple_of(2) {
-                self.set_right(r, g, b);
-            } else {
-                self.set_right(0, 0, 0);
-            }
-            if self.sys_show_timer >= 3000 { self.sys_show_flag = false; }
-        }
-
-        // 4. Sleep indicator (right side, 500ms blink, 3000ms duration)
-        if self.sleep_show_flag {
-            let (r, g, b) = if self.sleep_enabled { (0x00, 0x80, 0x00) } else { (0x80, 0x00, 0x00) };
-            if (self.sleep_show_timer / 500).is_multiple_of(2) {
-                self.set_right(r, g, b);
-            } else {
-                self.set_right(0, 0, 0);
-            }
-            if self.sleep_show_timer >= 3000 { self.sleep_show_flag = false; }
-        }
-
-        // 4. Caps Lock indicator (left side, cyan glow when on)
-        let caps_lock = (keyboard_leds & 0x02) != 0;
-        if caps_lock || (proto.rf_led & 0x02) != 0 {
-            self.set_left(0x00, 0x80, 0x80); // Cyan (SIDE_BLINK_LIGHT, SIDE_BLINK_LIGHT)
-        }
-
-        // 4b. Num Lock indicator (right side, white glow when on)
-        let num_lock = (keyboard_leds & 0x01) != 0 || (proto.rf_led & 0x01) != 0;
-        if num_lock {
-            self.set_right(0xFF, 0xFF, 0xFF); // White
-        }
-
-        // 5. RF link indicator (left side override)
-        self.rf_led_show(proto);
-
-        // M11 fix: rf_link_show_time increments every 1ms
-        self.rf_link_show_time = self.rf_link_show_time.saturating_add(elapsed_ms as u16);
-    }
-
-    /// Trigger sleep indicator
-    pub fn show_sleep(&mut self, enabled: bool) {
-        self.sleep_enabled = enabled;
-        self.sleep_show_flag = true;
-        self.sleep_show_timer = 0;
-    }
-
-    /// Trigger system switch indicator
-    pub fn show_sys(&mut self) {
-        self.sys_show_flag = true;
-        self.sys_show_timer = 0;
-    }
-
-    /// Trigger RF link blink
-    pub fn blink_rf(&mut self, count: u8) {
-        self.rf_blink_cnt = count;
-        self.rf_blink_timer = 0;
-        self.rf_link_show_time = 0;
-    }
-
-    /// Full device reset — port of device_reset_init (side.c:735-762)
-    pub fn reset(&mut self) {
-        self.mode = 0;
-        self.brightness = 3;
-        self.speed = 2;
-        self.rgb_enabled = true;
-        self.colour = 0;
-        self.play_point = 0;
-        self.play_cnt = 0;
-        self.play_timer = 0;
+        self.sys_led_show(hal);
+        self.rf_led_show(hal);
     }
 }

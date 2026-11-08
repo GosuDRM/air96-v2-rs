@@ -1,197 +1,922 @@
-//! Comprehensive unit tests for all firmware modules.
-//! Run with: cargo test --lib --target x86_64-unknown-linux-gnu
+//! Host tests. Run with: cargo test --lib --target x86_64-unknown-linux-gnu
+//!
+//! The behaviour tests drive the 1:1 C ports (`kb`, `wireless`, `led::side`)
+//! through a mock board and an NRF52 model, and assert what the C firmware
+//! (keyboards/air96_v2/ansi, v3.2.9) does on the wire and on the host.
 
-
-use crate::wireless::uart::*;
-use crate::wireless::report;
-use crate::wireless::sleep;
-use crate::keyboard::keymap;
-use crate::led::side;
-use crate::led::rgb;
 use crate::config::eeprom;
+use crate::hal::{Hal, UsbDeviceState};
+use crate::kb::*;
+use crate::keyboard::keymap;
+use crate::keyboard::matrix::{Debouncer, Matrix, MATRIX_ROWS};
+use crate::led::rgb;
+use crate::wireless::uart::*;
+use std::collections::VecDeque;
 
-// ===== UART CHECKSUM =====
-#[test] fn checksum_single() { assert_eq!(UartProtocol::checksum(&[0x00]), 0x5A); }
-#[test] fn checksum_multiple() { assert_eq!(UartProtocol::checksum(&[0x01, 0x02]), 0x59); }
-#[test] fn checksum_known() {
-    let name = b"\x01\x0FNuPhy Air96 V2";
-    assert_eq!(UartProtocol::checksum(name), 0x57 ^ UART_HEAD);
-}
-#[test] fn checksum_empty() { assert_eq!(UartProtocol::checksum(&[]), UART_HEAD); }
+// ═════════════════════════════════════════════════════════════════════════
+// Mock board + NRF52 model
+// ═════════════════════════════════════════════════════════════════════════
 
-// ===== UART FRAMES =====
-#[test] fn build_cmd_basic() { let mut p = UartProtocol::new(); assert_eq!(p.build_cmd(CMD_HAND, &[0x00]), 6); }
-#[test] fn build_report() { let mut p = UartProtocol::new(); assert_eq!(p.build_report(CMD_RPT_BYTE_KB, &[0u8; 8], 8), 13); }
-#[test] fn build_link_all_cmds() {
-    let mut p = UartProtocol::new();
-    assert_eq!(p.build_link_cmd(CMD_HAND), 6);
-    assert_eq!(p.build_link_cmd(CMD_SLEEP), 6);
-    p.link_mode = LinkMode::Bt1;
-    assert_eq!(p.build_link_cmd(CMD_SET_LINK), 6);
-    assert_eq!(p.rf_state, RfState::Linking);
-    assert_eq!(p.disconnect_delay, 0xFF);
-    assert_eq!(p.build_link_cmd(CMD_RF_STS_SYSC), 6);
-    p.link_mode = LinkMode::Bt2;
-    assert_eq!(p.build_link_cmd(CMD_NEW_ADV), 7);
-    assert_eq!(p.rf_state, RfState::Pairing);
-    assert_eq!(p.build_link_cmd(CMD_CLR_DEVICE), 6);
-    assert_eq!(p.build_link_cmd(CMD_SET_CONFIG), 6);
-    assert_eq!(p.build_link_cmd(CMD_RF_DFU), 6);
-    assert_eq!(p.build_link_cmd(CMD_READ_DATA), 5);
-}
-
-// ===== UART DISPATCH =====
-#[test] fn dispatch_connect() {
-    let mut p = UartProtocol::new(); p.link_mode = LinkMode::Rf24;
-    p.dispatch_frame(CMD_RF_STS_SYSC, &[0, 3, 0, 0, 85]);
-    assert_eq!(p.rf_state, RfState::Connect); assert_eq!(p.rf_battery, 85);
-}
-#[test] fn dispatch_handshake() { let mut p = UartProtocol::new(); p.dispatch_frame(CMD_HAND, &[]); assert!(p.f_rf_hand_ok); }
-#[test] fn dispatch_suspend() { let mut p = UartProtocol::new(); p.dispatch_frame(CMD_24G_SUSPEND, &[]); assert!(p.f_goto_sleep); }
-#[test] fn dispatch_read_data() {
-    let mut p = UartProtocol::new(); p.dispatch_frame(CMD_READ_DATA, &[0, 0, 0, 0, 1, 1, 2]);
-    assert_eq!(p.link_mode, LinkMode::Bt1); assert_eq!(p.rf_channel, 1); assert_eq!(p.ble_channel, 2);
-}
-#[test] fn battery_not_overwritten() {
-    let mut p = UartProtocol::new(); p.rf_battery = 45; p.link_mode = LinkMode::Rf24;
-    p.dispatch_frame(CMD_RF_STS_SYSC, &[0, 3, 0, 1, 45]);
-    assert_eq!(p.rf_battery, 45);
-}
-#[test] fn battery_capped_above_100() {
-    let mut p = UartProtocol::new(); p.link_mode = LinkMode::Rf24; p.rf_battery = 50;
-    p.dispatch_frame(CMD_RF_STS_SYSC, &[0, 3, 0, 0, 200]);
-    assert_eq!(p.rf_battery, 50);
-}
-#[test] fn rf_led_on_connect() {
-    let mut p = UartProtocol::new(); p.link_mode = LinkMode::Rf24;
-    p.dispatch_frame(CMD_RF_STS_SYSC, &[0, 3, 0x07, 0, 85]);
-    assert_eq!(p.rf_led, 0x07);
-}
-#[test] fn mismatch_sets_send_channel() {
-    let mut p = UartProtocol::new(); p.link_mode = LinkMode::Bt1; p.rf_state = RfState::Connect;
-    for _ in 0..6 { p.dispatch_frame(CMD_RF_STS_SYSC, &[4, 3, 0, 0, 85]); }
-    assert!(p.f_send_channel);
-}
-#[test] fn mismatch_clears_on_match() {
-    let mut p = UartProtocol::new(); p.link_mode = LinkMode::Bt1; p.error_cnt = 3;
-    p.dispatch_frame(CMD_RF_STS_SYSC, &[1, 3, 0, 0, 85]);
-    assert_eq!(p.error_cnt, 0); assert!(!p.f_send_channel);
-}
-#[test] fn new_adv_sets_flag() { let mut p = UartProtocol::new(); p.dispatch_frame(CMD_NEW_ADV, &[]); assert!(p.f_rf_new_adv_ok); }
-
-// ===== FRAME PARSING =====
-#[test] fn parse_idle_returns_none() { let mut p = UartProtocol::new(); p.rx_state = RxState::Idle; assert!(p.parse_frame().is_none()); }
-#[test] fn parse_ack_returns_none() {
-    let mut p = UartProtocol::new(); p.rx_state = RxState::Done; p.rx_len = 3;
-    p.rx_buf[0] = UART_HEAD; p.rx_buf[2] = 0xA0;
-    assert!(p.parse_frame().is_none());
-}
-#[test] fn parse_bad_checksum() {
-    let mut p = UartProtocol::new(); p.rx_state = RxState::Done; p.rx_len = 6;
-    p.rx_buf[0] = UART_HEAD; p.rx_buf[1] = CMD_RF_STS_SYSC; p.rx_buf[3] = 1;
-    p.rx_buf[4] = 0x42; p.rx_buf[5] = 0x00;
-    assert!(p.parse_frame().is_none());
-    assert_eq!(p.rx_state, RxState::SumErr);
-    assert_eq!(p.rx_len, 0);
-}
-#[test] fn parse_length_mismatch() {
-    let mut p = UartProtocol::new(); p.rx_state = RxState::Done; p.rx_len = 7;
-    p.rx_buf[0] = UART_HEAD; p.rx_buf[1] = CMD_RF_STS_SYSC; p.rx_buf[3] = 1;
-    assert!(p.parse_frame().is_none());
-    assert_eq!(p.rx_state, RxState::FormatErr);
-    assert_eq!(p.rx_len, 0);
-}
-#[test] fn parse_valid() {
-    let mut p = UartProtocol::new(); let data = [0x42u8; 1]; let cs = UartProtocol::checksum(&data);
-    p.rx_state = RxState::Done; p.rx_len = 6;
-    p.rx_buf[0] = UART_HEAD; p.rx_buf[1] = CMD_RF_STS_SYSC; p.rx_buf[3] = 1;
-    p.rx_buf[4] = 0x42; p.rx_buf[5] = cs;
-    assert!(p.parse_frame().is_some());
+struct Mock {
+    t: u32,
+    tx: Vec<(u32, Vec<u8>)>,
+    rx: VecDeque<u8>,
+    reset_log: Vec<(u32, bool)>,
+    led_on: bool,
+    dev_pin: bool,
+    sys_pin: bool,
+    usb_state: UsbDeviceState,
+    usb_suspended: bool,
+    usb_leds: u8,
+    usb_nkro: Vec<(u8, [u8; 30])>,
+    usb_kb: Vec<[u8; 8]>,
+    usb_consumer: Vec<u16>,
+    usb_system: Vec<u16>,
+    usb_mouse: Vec<[u8; 5]>,
+    wakeups: u32,
+    remote_wakeup: bool,
+    flushes: u32,
+    cfgs: Vec<eeprom::UserConfig>,
+    ee_inits: u32,
+    keymap_raw: u16,
+    resets: u32,
+    dfu: u32,
+    // NRF model
+    nrf_auto: bool,
+    nrf_saved: [u8; 3], // link_mode, rf_channel, ble_channel
+    nrf_state: u8,
+    nrf_led: u8,
+    nrf_charge: u8,
+    nrf_battery: u8,
+    next_reply: Option<Vec<u8>>,
 }
 
-// ===== STATE MACHINES =====
-#[test] fn rf_state_values() {
-    assert_eq!(RfState::Idle as u8, 0); assert_eq!(RfState::Pairing as u8, 1);
-    assert_eq!(RfState::Linking as u8, 2); assert_eq!(RfState::Connect as u8, 3);
-    assert_eq!(RfState::Disconnect as u8, 4); assert_eq!(RfState::Sleep as u8, 5);
-}
-#[test] fn link_mode_values() {
-    assert_eq!(LinkMode::Rf24 as u8, 0); assert_eq!(LinkMode::Bt1 as u8, 1);
-    assert_eq!(LinkMode::Bt2 as u8, 2); assert_eq!(LinkMode::Bt3 as u8, 3);
-    assert_eq!(LinkMode::Usb as u8, 4);
-}
-#[test] fn rf_state_from_u8_all() {
-    assert_eq!(RfState::from_u8(0), RfState::Idle);
-    assert_eq!(RfState::from_u8(1), RfState::Pairing);
-    assert_eq!(RfState::from_u8(2), RfState::Linking);
-    assert_eq!(RfState::from_u8(3), RfState::Connect);
-    assert_eq!(RfState::from_u8(4), RfState::Disconnect);
-    assert_eq!(RfState::from_u8(5), RfState::Sleep);
-    assert_eq!(RfState::from_u8(6), RfState::Snif);
-    assert_eq!(RfState::from_u8(0xFE), RfState::Invalid);
-    assert_eq!(RfState::from_u8(0xFF), RfState::ErrState);
-}
-#[test] fn link_mode_from_u8_all() {
-    assert_eq!(LinkMode::from_u8(0), LinkMode::Rf24);
-    assert_eq!(LinkMode::from_u8(1), LinkMode::Bt1);
-    assert_eq!(LinkMode::from_u8(2), LinkMode::Bt2);
-    assert_eq!(LinkMode::from_u8(3), LinkMode::Bt3);
-    assert_eq!(LinkMode::from_u8(4), LinkMode::Usb);
-    assert_eq!(LinkMode::from_u8(99), LinkMode::Usb);
-}
-#[test] fn initial_values() {
-    let p = UartProtocol::new();
-    assert_eq!(p.rx_state, RxState::Idle); assert_eq!(p.link_mode, LinkMode::Usb);
-    assert_eq!(p.rf_state, RfState::Idle); assert_eq!(p.rf_battery, 100);
-    assert!(!p.f_rf_reset); assert!(!p.f_send_channel);
+impl Mock {
+    fn new() -> Self {
+        Self {
+            t: 1000,
+            tx: vec![],
+            rx: VecDeque::new(),
+            reset_log: vec![],
+            led_on: true,
+            dev_pin: true,
+            sys_pin: false,
+            usb_state: UsbDeviceState::Configured,
+            usb_suspended: false,
+            usb_leds: 0,
+            usb_nkro: vec![],
+            usb_kb: vec![],
+            usb_consumer: vec![],
+            usb_system: vec![],
+            usb_mouse: vec![],
+            wakeups: 0,
+            remote_wakeup: false,
+            flushes: 0,
+            cfgs: vec![],
+            ee_inits: 0,
+            keymap_raw: 0x1400,
+            resets: 0,
+            dfu: 0,
+            nrf_auto: true,
+            nrf_saved: [LINK_USB, LINK_BT_1, LINK_BT_1],
+            nrf_state: RF_CONNECT,
+            nrf_led: 0,
+            nrf_charge: 0,
+            nrf_battery: 80,
+            next_reply: None,
+        }
+    }
+
+    /// Frames sent with the given command / report type.
+    fn sent(&self, cmd: u8) -> Vec<Vec<u8>> {
+        self.tx.iter().filter(|(_, f)| f[1] == cmd).map(|(_, f)| f.clone()).collect()
+    }
+
+    fn reports(&self) -> Vec<Vec<u8>> {
+        self.tx.iter().filter(|(_, f)| (CMD_RPT_MS..=CMD_RPT_SYS).contains(&f[1])).map(|(_, f)| f.clone()).collect()
+    }
 }
 
-// ===== COMMAND CONSTANTS =====
-#[test] fn all_commands() {
-    assert_eq!(CMD_POWER_UP, 0xF0); assert_eq!(CMD_SLEEP, 0xF1); assert_eq!(CMD_HAND, 0xF2);
-    assert_eq!(CMD_24G_SUSPEND, 0xF4); assert_eq!(CMD_RPT_MS, 0xE0); assert_eq!(CMD_RPT_BYTE_KB, 0xE1);
-    assert_eq!(CMD_RPT_BIT_KB, 0xE2); assert_eq!(CMD_RPT_CONSUME, 0xE3); assert_eq!(CMD_RPT_SYS, 0xE4);
-    assert_eq!(CMD_SET_LINK, 0xC0); assert_eq!(CMD_SET_CONFIG, 0xC1); assert_eq!(CMD_SET_NAME, 0xC3);
-    assert_eq!(CMD_CLR_DEVICE, 0xC5); assert_eq!(CMD_NEW_ADV, 0xC7); assert_eq!(CMD_RF_STS_SYSC, 0xC9);
-    assert_eq!(CMD_SET_24G_NAME, 0xCA); assert_eq!(CMD_RF_DFU, 0xB1);
-    assert_eq!(CMD_WRITE_DATA, 0x80); assert_eq!(CMD_READ_DATA, 0x81);
-}
-#[test] fn frame_lengths() {
-    let mut p = UartProtocol::new();
-    assert_eq!(p.build_link_cmd(CMD_SET_NAME), 16);
-    assert_eq!(p.build_link_cmd(CMD_SET_24G_NAME), 37);
-    p.link_mode = LinkMode::Bt1;
-    assert_eq!(p.build_link_cmd(CMD_NEW_ADV), 7);
+/// An NRF → keyboard frame: incoming checksum is the plain byte sum.
+fn nrf_frame(cmd: u8, data: &[u8]) -> Vec<u8> {
+    let mut f = vec![UART_HEAD, cmd, 0x00, data.len() as u8];
+    f.extend_from_slice(data);
+    f.push(data.iter().fold(0u8, |a, &b| a.wrapping_add(b)));
+    f
 }
 
-// ===== KEYMAP BASIC =====
-#[test] fn lnk_to_channel() {
-    assert_eq!(keymap::lnk_to_channel(keymap::KC_LNK_RF), LinkMode::Rf24);
-    assert_eq!(keymap::lnk_to_channel(keymap::KC_LNK_BLE1), LinkMode::Bt1);
-    assert_eq!(keymap::lnk_to_channel(keymap::KC_LNK_BLE2), LinkMode::Bt2);
-    assert_eq!(keymap::lnk_to_channel(keymap::KC_LNK_BLE3), LinkMode::Bt3);
+impl Hal for Mock {
+    fn now(&self) -> u32 {
+        self.t
+    }
+    fn wait_ms(&mut self, ms: u32) {
+        self.t += ms;
+    }
+    fn uart_send_bytes(&mut self, buf: &[u8]) {
+        self.tx.push((self.t, buf.to_vec()));
+        if let Some(r) = self.next_reply.take() {
+            self.rx.extend(r);
+            return;
+        }
+        if !self.nrf_auto {
+            return;
+        }
+        let reply = match buf[1] {
+            CMD_HAND | CMD_SET_NAME | CMD_SET_24G_NAME | CMD_SET_LINK | CMD_SLEEP | CMD_SET_CONFIG | CMD_CLR_DEVICE
+            | CMD_NEW_ADV => vec![UART_HEAD, buf[1], 0xA0],
+            CMD_READ_DATA => {
+                let mut func = [0u8; 32];
+                func[4..7].copy_from_slice(&self.nrf_saved);
+                nrf_frame(CMD_READ_DATA, &func)
+            }
+            CMD_RF_STS_SYSC => {
+                nrf_frame(CMD_RF_STS_SYSC, &[buf[4], self.nrf_state, self.nrf_led, self.nrf_charge, self.nrf_battery])
+            }
+            _ => vec![],
+        };
+        self.rx.extend(reply);
+    }
+    fn uart_read(&mut self) -> Option<u8> {
+        self.rx.pop_front()
+    }
+    fn nrf_reset_pin(&mut self, high: bool) {
+        self.reset_log.push((self.t, high));
+    }
+    fn led_power(&mut self, on: bool) {
+        self.led_on = on;
+    }
+    fn read_dev_mode_pin(&mut self) -> bool {
+        self.dev_pin
+    }
+    fn read_sys_mode_pin(&mut self) -> bool {
+        self.sys_pin
+    }
+    fn usb_state(&self) -> UsbDeviceState {
+        self.usb_state
+    }
+    fn usb_suspended(&self) -> bool {
+        self.usb_suspended
+    }
+    fn usb_keyboard_leds(&self) -> u8 {
+        self.usb_leds
+    }
+    fn usb_send_nkro(&mut self, mods: u8, bits: &[u8; 30]) {
+        self.usb_nkro.push((mods, *bits));
+        // Host model: a NumLock press toggles the host's NumLock LED.
+        if bits[KC_NUM_LOCK as usize / 8] & (1 << (KC_NUM_LOCK % 8)) != 0 {
+            self.usb_leds ^= 1;
+        }
+    }
+    fn usb_send_keyboard(&mut self, report: &[u8; 8]) {
+        self.usb_kb.push(*report);
+    }
+    fn usb_send_mouse(&mut self, report: &[u8; 5]) {
+        self.usb_mouse.push(*report);
+    }
+    fn usb_send_consumer(&mut self, usage: u16) {
+        self.usb_consumer.push(usage);
+    }
+    fn usb_send_system(&mut self, usage: u16) {
+        self.usb_system.push(usage);
+    }
+    fn usb_remote_wakeup_enabled(&self) -> bool {
+        self.remote_wakeup
+    }
+    fn usb_wakeup_host(&mut self) {
+        self.wakeups += 1;
+    }
+    fn rgb_update_pwm_buffers(&mut self, _rgb: &mut rgb::RgbMatrix) {
+        self.flushes += 1;
+    }
+    fn eeconfig_update(&mut self, cfg: &eeprom::UserConfig) {
+        self.cfgs.push(*cfg);
+    }
+    fn eeconfig_init(&mut self) {
+        self.ee_inits += 1;
+    }
+    fn eeconfig_read_keymap(&self) -> u16 {
+        self.keymap_raw
+    }
+    fn eeconfig_update_keymap(&mut self, raw: u16) {
+        self.keymap_raw = raw;
+    }
+    fn bootloader_jump(&mut self) {
+        self.dfu += 1;
+    }
+    fn mcu_reset(&mut self) {
+        self.resets += 1;
+    }
 }
+
+/// Power on like the C firmware: keyboard_post_init_kb(), protocol_post_init().
+fn boot(m: &mut Mock) -> Kb {
+    crate::via::via_init(); // keyboard_init()
+    let mut kb = Kb::new();
+    kb.keymap_config_init(m);
+    kb.keyboard_post_init_kb(m, None);
+    kb.protocol_post_init();
+    kb
+}
+
+/// Run the housekeeping loop for `ms` milliseconds (1 pass per ms).
+fn run(kb: &mut Kb, m: &mut Mock, ms: u32) {
+    for _ in 0..ms {
+        kb.housekeeping_task_kb(m, false);
+        m.t += 1;
+    }
+}
+
+fn tap(kb: &mut Kb, m: &mut Mock, row: u8, col: u8) {
+    kb.matrix_event(m, row, col, true);
+    kb.matrix_event(m, row, col, false);
+}
+
+fn nkro_has(bits: &[u8; 30], key: u8) -> bool {
+    bits[key as usize / 8] & (1 << (key % 8)) != 0
+}
+
+// Matrix positions (keyboard.json LAYOUT)
+const ESC: (u8, u8) = (0, 0);
+const KEY_A: (u8, u8) = (3, 1);
+const KEY_LSFT: (u8, u8) = (4, 0);
+const KEY_FN: (u8, u8) = (5, 10);
+const KEY_M: (u8, u8) = (4, 8);
+const KEY_1: (u8, u8) = (1, 1);
+const KEY_4: (u8, u8) = (1, 4);
+const KEY_F13_POS: (u8, u8) = (0, 14); // Fn+PrtSc = MAC_PRTA on both Fn layers
+const KEY_NUM: (u8, u8) = (1, 17);
+
+// ═════════════════════════════════════════════════════════════════════════
+// rf.c — UART framing
+// ═════════════════════════════════════════════════════════════════════════
+
+/// The NRF checksums its frames with a plain byte sum. The previous Rust
+/// parser used the outgoing (XOR 0x5A) checksum and dropped every status
+/// frame, so link state, battery and lock LEDs never updated.
+#[test]
+fn rx_status_frame_uses_plain_sum_checksum() {
+    let mut m = Mock::new();
+    m.nrf_auto = false;
+    let mut kb = Kb::new();
+    kb.dev_info.link_mode = LINK_BT_1;
+
+    m.rx.extend(nrf_frame(CMD_RF_STS_SYSC, &[LINK_BT_1, RF_CONNECT, 0x02, 0x01, 57]));
+    kb.uart_receive_pro(&mut m);
+    assert_eq!(kb.dev_info.rf_state, RF_CONNECT);
+    assert_eq!((kb.dev_info.rf_led, kb.dev_info.rf_charge, kb.dev_info.rf_baterry), (0x02, 0x01, 57));
+
+    let mut bad = nrf_frame(CMD_RF_STS_SYSC, &[LINK_BT_1, RF_DISCONNECT, 0, 0, 10]);
+    *bad.last_mut().unwrap() ^= UART_HEAD;
+    m.rx.extend(bad);
+    kb.uart_receive_pro(&mut m);
+    assert_eq!(kb.dev_info.rf_state, RF_CONNECT, "corrupt frame must be ignored");
+}
+
+/// Outgoing command frames are byte-identical to C's uart_send_cmd().
+#[test]
+fn command_frames_match_c() {
+    let mut m = Mock::new();
+    m.nrf_auto = false;
+    let mut kb = Kb::new();
+    kb.dev_info.link_mode = LINK_BT_2;
+    for cmd in [CMD_HAND, CMD_SET_LINK, CMD_NEW_ADV, CMD_RF_STS_SYSC, CMD_READ_DATA, CMD_SET_CONFIG, CMD_SET_NAME, CMD_SET_24G_NAME] {
+        kb.uart_send_cmd(&mut m, cmd, 0, 0);
+    }
+    let f: Vec<Vec<u8>> = m.tx.iter().map(|x| x.1.clone()).collect();
+    assert_eq!(f[0], [0x5A, CMD_HAND, 0, 1, 0, 0x5A]);
+    assert_eq!(f[1], [0x5A, CMD_SET_LINK, 0, 1, 2, 2 ^ 0x5A]);
+    assert_eq!(f[2], [0x5A, CMD_NEW_ADV, 0, 2, 2, 1, 3 ^ 0x5A]);
+    assert_eq!(f[3], [0x5A, CMD_RF_STS_SYSC, 0, 1, 2, 2 ^ 0x5A]);
+    assert_eq!(f[4], [0x5A, CMD_READ_DATA, 0, 2, 0, 32, 32 ^ 0x5A]);
+    assert_eq!(f[5], [0x5A, CMD_SET_CONFIG, 0, 1, 24, 24 ^ 0x5A]);
+    let mut name = vec![0x5A, CMD_SET_NAME, 0, 11, 1, 9];
+    name.extend_from_slice(b"Air96 V2\0");
+    name.push(get_checksum(&name[4..]));
+    assert_eq!(f[6], name);
+    let dongle: Vec<u8> = "NuPhy Air96 V2 Dongle".bytes().flat_map(|c| [c, 0]).collect();
+    assert_eq!(f[7][3], 44);
+    assert_eq!(&f[7][4..6], &[44, 3]);
+    assert_eq!(&f[7][6..48], &dongle[..]);
+    assert_eq!(f[7][48], get_checksum(&f[7][4..48]));
+}
+
+/// A short ACK only satisfies the command that is waiting for it, and a
+/// reply already queued before the send is drained, not counted.
+#[test]
+fn ack_matches_pending_command() {
+    let mut m = Mock::new();
+    m.nrf_auto = false;
+    let mut kb = Kb::new();
+    m.next_reply = Some(vec![UART_HEAD, CMD_HAND, 0xA0]);
+    assert_eq!(kb.uart_send_cmd(&mut m, CMD_SLEEP, 5, 0), TX_TIMEOUT, "ACK for another command");
+    m.rx.extend([UART_HEAD, CMD_SLEEP, 0xA0]);
+    assert_eq!(kb.uart_send_cmd(&mut m, CMD_SLEEP, 5, 0), TX_TIMEOUT, "stale ACK from before the send");
+    m.next_reply = Some(vec![UART_HEAD, CMD_SLEEP, 0xA0]);
+    assert_eq!(kb.uart_send_cmd(&mut m, CMD_SLEEP, 5, 0), TX_OK);
+}
+
+/// CMD_24G_SUSPEND from the dongle only puts the 2.4G link to sleep.
+#[test]
+fn dongle_suspend_only_in_24g_mode() {
+    let mut m = Mock::new();
+    m.nrf_auto = false;
+    let mut kb = Kb::new();
+    kb.dev_info.link_mode = LINK_BT_1;
+    m.rx.extend([UART_HEAD, CMD_24G_SUSPEND, 0xA0]);
+    kb.uart_receive_pro(&mut m);
+    assert!(!kb.f_goto_sleep);
+    kb.dev_info.link_mode = LINK_RF_24;
+    m.rx.extend([UART_HEAD, CMD_24G_SUSPEND, 0xA0]);
+    kb.uart_receive_pro(&mut m);
+    assert!(kb.f_goto_sleep);
+}
+
+/// A partial frame is dropped after 10ms of silence so noise can't wedge the parser.
+#[test]
+fn partial_frame_times_out() {
+    let mut m = Mock::new();
+    m.nrf_auto = false;
+    let mut kb = Kb::new();
+    kb.dev_info.link_mode = LINK_BT_1;
+    m.rx.extend([UART_HEAD, CMD_RF_STS_SYSC, 0x00, 5, LINK_BT_1]);
+    kb.uart_receive_pro(&mut m);
+    m.t += 11;
+    m.rx.extend(nrf_frame(CMD_RF_STS_SYSC, &[LINK_BT_1, RF_CONNECT, 0, 0, 90]));
+    kb.uart_receive_pro(&mut m);
+    assert_eq!(kb.dev_info.rf_baterry, 90);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// ansi.c — power-on
+// ═════════════════════════════════════════════════════════════════════════
+
+/// The radio's saved link must be read before the dial is scanned, so a
+/// wireless power-on returns to the last channel instead of 2.4G.
+#[test]
+fn power_on_restores_saved_radio_channel() {
+    let mut m = Mock::new();
+    m.dev_pin = false; // wireless
+    m.nrf_saved = [LINK_BT_2, LINK_BT_2, LINK_BT_2];
+    let kb = boot(&mut m);
+    assert_eq!(kb.dev_info.link_mode, LINK_BT_2);
+    assert_eq!(kb.dev_info.rf_channel, LINK_BT_2);
+    assert!(!m.sent(CMD_READ_DATA).is_empty() && !m.sent(CMD_SET_24G_NAME).is_empty());
+}
+
+/// Win position: default layer 2 and NKRO; Mac: layer 0 and still NKRO (v3.2.7).
+#[test]
+fn os_dial_selects_layer_and_keeps_nkro() {
+    for (mac, layer) in [(false, 2u32), (true, 0)] {
+        let mut m = Mock::new();
+        m.sys_pin = mac;
+        let kb = boot(&mut m);
+        assert_eq!(kb.default_layer_state, 1 << layer);
+        assert!(kb.nkro);
+        assert_eq!(kb.dev_info.sys_sw_state, if mac { SYS_SW_MAC } else { SYS_SW_WIN });
+    }
+}
+
+/// First boot (no saved config) applies the C defaults: HSV 255/255/151,
+/// CYCLE_LEFT_RIGHT, QMK default speed, side bar wave/brightness 3, sleep on.
+#[test]
+fn first_boot_defaults() {
+    let mut m = Mock::new();
+    let kb = boot(&mut m);
+    assert_eq!((kb.rgb.hue, kb.rgb.sat, kb.rgb.val), (255, 255, 151));
+    assert_eq!((kb.rgb.mode, kb.rgb.speed), (RGB_MATRIX_DEFAULT_MODE, RGB_MATRIX_DEFAULT_SPD));
+    assert_eq!((kb.side.side_mode, kb.side.side_light, kb.side.side_speed, kb.side.side_rgb), (0, 3, 2, 1));
+    assert!(kb.user_config.sleep_enable);
+    assert_eq!(m.cfgs.len(), 1, "first boot persists the defaults once");
+}
+
+/// Out-of-range saved side settings are clamped (no table overrun).
+#[test]
+fn saved_side_config_is_clamped() {
+    let mut m = Mock::new();
+    let mut kb = Kb::new();
+    let cfg = eeprom::UserConfig { side_mode: 9, side_brightness: 9, side_speed: 9, side_colour: 9, ..Default::default() };
+    kb.keyboard_post_init_kb(&mut m, Some(cfg));
+    assert_eq!((kb.side.side_mode, kb.side.side_light, kb.side.side_speed, kb.side.side_colour), (0, 3, 2, 0));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// QMK actions / layers / shortcuts
+// ═════════════════════════════════════════════════════════════════════════
+
+/// MO() layers are a bitmask: releasing either of two held MO(4) keys turns
+/// layer 4 off (QMK layer_off), and the highest layer wins.
+#[test]
+fn mo_layers_are_bitmask() {
+    let mut m = Mock::new();
+    m.sys_pin = true; // Mac: Fn = MO(1), LSFT/M on layer 1 = MO(4)
+    let mut kb = boot(&mut m);
+    kb.matrix_event(&mut m, KEY_FN.0, KEY_FN.1, true);
+    kb.matrix_event(&mut m, KEY_LSFT.0, KEY_LSFT.1, true);
+    kb.matrix_event(&mut m, KEY_M.0, KEY_M.1, true);
+    assert_eq!(kb.layer_state, (1 << 1) | (1 << 4));
+    kb.matrix_event(&mut m, KEY_M.0, KEY_M.1, false);
+    assert_eq!(kb.layer_state, 1 << 1);
+}
+
+/// A key releases with the keycode it pressed with, even if Fn was released first.
+#[test]
+fn release_uses_press_time_keycode() {
+    let mut m = Mock::new();
+    let mut kb = boot(&mut m);
+    kb.matrix_event(&mut m, KEY_FN.0, KEY_FN.1, true);
+    kb.matrix_event(&mut m, 0, 2, true); // Win Fn+F1 = BRID (consumer)
+    kb.matrix_event(&mut m, KEY_FN.0, KEY_FN.1, false);
+    kb.matrix_event(&mut m, 0, 2, false);
+    assert_eq!(m.usb_consumer, vec![0x0070, 0]);
+    assert!(m.usb_nkro.iter().all(|(_, b)| !nkro_has(b, 0x3A)), "F1 never pressed");
+}
+
+/// More than six keys are reported (NKRO), matching FORCE_NKRO.
+#[test]
+fn nkro_reports_more_than_six_keys() {
+    let mut m = Mock::new();
+    let mut kb = boot(&mut m);
+    for col in 1..=8 {
+        kb.matrix_event(&mut m, 2, col, true); // Q W E R T Y U I
+    }
+    let (_, bits) = *m.usb_nkro.last().unwrap();
+    assert_eq!(bits.iter().map(|b| b.count_ones()).sum::<u32>(), 8);
+}
+
+/// tap_shortcut() borrows modifiers without releasing a held one, holds the
+/// key 5ms, and leaves the physically held modifier down afterwards.
+#[test]
+fn shortcut_keeps_held_modifier() {
+    let mut m = Mock::new();
+    m.sys_pin = true; // Mac base row 0 col 5 = MAC_SEARCH (GUI+Space)
+    let mut kb = boot(&mut m);
+    kb.matrix_event(&mut m, KEY_LSFT.0, KEY_LSFT.1, true);
+    let n = m.usb_nkro.len();
+    let t0 = m.t;
+    kb.matrix_event(&mut m, 0, 5, true);
+    let sent = &m.usb_nkro[n..];
+    assert_eq!(sent[0].0, 0x02 | 0x08);
+    assert!(nkro_has(&sent[0].1, 0x2C));
+    assert!(m.t - t0 >= 5, "space held at least 5ms");
+    let (mods, bits) = *m.usb_nkro.last().unwrap();
+    assert_eq!(mods, 0x02, "Shift stays down, GUI released");
+    assert!(!nkro_has(&bits, 0x2C));
+}
+
+/// MAC_PRTA is Cmd+Shift+4 in Mac mode (base layer) and Win+Shift+S in
+/// Windows mode (Fn layer).
+#[test]
+fn screenshot_key_follows_os_mode() {
+    for (mac, key) in [(true, 0x21u8), (false, 0x16)] {
+        let mut m = Mock::new();
+        m.sys_pin = mac;
+        let mut kb = boot(&mut m);
+        if !mac {
+            kb.matrix_event(&mut m, KEY_FN.0, KEY_FN.1, true);
+        }
+        let n = m.usb_nkro.len();
+        tap(&mut kb, &mut m, KEY_F13_POS.0, KEY_F13_POS.1);
+        let (mods, bits) = m.usb_nkro[n];
+        assert_eq!(mods, 0x0A);
+        assert!(nkro_has(&bits, key), "mac={mac}");
+    }
+}
+
+/// host_consumer_send() only sends changes.
+#[test]
+fn consumer_reports_are_deduplicated() {
+    let mut m = Mock::new();
+    let mut kb = boot(&mut m);
+    m.usb_consumer.clear();
+    kb.host_consumer_send(&mut m, 0xE9);
+    kb.host_consumer_send(&mut m, 0xE9);
+    kb.host_consumer_send(&mut m, 0);
+    assert_eq!(m.usb_consumer, vec![0xE9, 0]);
+}
+
+/// Holding Shift reverses RGB steps (QMK process_rgb).
+#[test]
+fn shift_reverses_rgb_keys() {
+    let mut m = Mock::new();
+    m.sys_pin = true; // Mac Fn+DOWN = RGB_VAD
+    let mut kb = boot(&mut m);
+    let v = kb.rgb.val;
+    kb.matrix_event(&mut m, KEY_FN.0, KEY_FN.1, true);
+    tap(&mut kb, &mut m, 5, 15);
+    assert_eq!(kb.rgb.val, v - RGB_MATRIX_VAL_STEP);
+    kb.matrix_event(&mut m, 4, 13, true); // RShift → MO(4) on layer 1, use real shift instead
+    kb.matrix_event(&mut m, 4, 13, false);
+    kb.real_mods = 0x02;
+    tap(&mut kb, &mut m, 5, 15);
+    assert_eq!(kb.rgb.val, v);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// rf.c — wireless reports
+// ═════════════════════════════════════════════════════════════════════════
+
+fn wireless(m: &mut Mock) -> Kb {
+    m.dev_pin = false;
+    m.nrf_saved = [LINK_BT_1, LINK_BT_1, LINK_BT_1];
+    let mut kb = boot(m);
+    run(&mut kb, m, 400); // first dev_sts_sync installs the RF driver
+    assert_eq!(kb.driver, HostDriver::Rf);
+    assert_eq!(kb.dev_info.rf_state, RF_CONNECT);
+    m.tx.clear();
+    kb
+}
+
+/// Usages 1..111 live in the bitmap report, 112+ in the byte report slots;
+/// adding a key never moves a held one between the dongle's interfaces.
+#[test]
+fn wireless_keys_have_fixed_report_ownership() {
+    let mut m = Mock::new();
+    let mut kb = wireless(&mut m);
+    kb.register_code(&mut m, 0x04);
+    let bit = m.sent(CMD_RPT_BIT_KB);
+    assert_eq!(bit.len(), 1);
+    assert_eq!(bit[0][4 + 1] & 1 << 4, 1 << 4, "A in bitmap");
+    kb.register_code(&mut m, 0x73); // F24 (usage 115)
+    let byte = m.sent(CMD_RPT_BYTE_KB);
+    assert_eq!(&byte.last().unwrap()[4..12], &[0, 0, 0x73, 0, 0, 0, 0, 0]);
+    assert_eq!(m.sent(CMD_RPT_BIT_KB).len(), 1, "A did not move");
+}
+
+/// Reports captured while the link is down are replayed in order once the
+/// selected channel reports connected (8ms apart on Bluetooth).
+#[test]
+fn reports_queue_while_linking_and_replay_in_order() {
+    let mut m = Mock::new();
+    let mut kb = wireless(&mut m);
+    m.nrf_state = RF_LINKING;
+    kb.dev_info.rf_state = RF_LINKING;
+    tap(&mut kb, &mut m, KEY_A.0, KEY_A.1);
+    tap(&mut kb, &mut m, KEY_1.0, KEY_1.1);
+    assert!(m.reports().is_empty(), "nothing sent while linking");
+    m.nrf_state = RF_CONNECT;
+    run(&mut kb, &mut m, 300);
+    // The replayed frames come first; periodic resends of the idle state follow.
+    let bit: Vec<(u32, Vec<u8>)> = m.tx.iter().filter(|(_, f)| f[1] == CMD_RPT_BIT_KB).cloned().collect();
+    let keys: Vec<u8> = bit[..4].iter().map(|(_, f)| f[5] | f[8]).collect();
+    assert_eq!(keys, vec![0x10, 0, 0x40, 0], "A down, A up, 1 down, 1 up");
+    assert!(bit[..4].windows(2).all(|w| w[1].0 - w[0].0 >= 8), "8ms Bluetooth pacing");
+}
+
+/// Old taps are not replayed after a long outage; current key state is.
+#[test]
+fn stale_queue_expires_after_one_second() {
+    let mut m = Mock::new();
+    let mut kb = wireless(&mut m);
+    m.nrf_state = RF_LINKING;
+    kb.dev_info.rf_state = RF_LINKING;
+    tap(&mut kb, &mut m, KEY_A.0, KEY_A.1);
+    m.t += 2000;
+    m.nrf_state = RF_CONNECT;
+    run(&mut kb, &mut m, 300);
+    let r = m.reports();
+    let kinds: Vec<u8> = r[..5].iter().map(|f| f[1]).collect();
+    assert_eq!(kinds, vec![CMD_RPT_MS, CMD_RPT_BYTE_KB, CMD_RPT_BIT_KB, CMD_RPT_CONSUME, CMD_RPT_SYS], "one current-state report per endpoint");
+    assert!(r.iter().all(|f| f[4..f.len() - 1].iter().all(|&b| b == 0)), "the old tap is not replayed");
+}
+
+/// While typing (<2s idle) the current reports are re-sent every ~100ms.
+#[test]
+fn periodic_resend_while_active() {
+    let mut m = Mock::new();
+    let mut kb = wireless(&mut m);
+    kb.matrix_event(&mut m, KEY_A.0, KEY_A.1, true);
+    m.tx.clear();
+    run(&mut kb, &mut m, 1000);
+    let n = m.sent(CMD_RPT_BYTE_KB).len();
+    assert!((8..=10).contains(&n), "{n}");
+    assert_eq!(m.sent(CMD_RPT_BIT_KB).len(), n, "bitmap re-sent alongside");
+    // A held key is activity (Sleep_Handle), so resends continue; after the
+    // release they stop once the keyboard has been idle for 2s.
+    // (The NumLock auto-on press also counts as activity, so allow for it.)
+    kb.matrix_event(&mut m, KEY_A.0, KEY_A.1, false);
+    run(&mut kb, &mut m, 3000);
+    m.tx.clear();
+    run(&mut kb, &mut m, 1000);
+    assert!(m.sent(CMD_RPT_BYTE_KB).is_empty(), "stops after 2s idle");
+}
+
+/// Ten unanswered status polls reset the NRF without blocking the scan:
+/// 100ms, reset low 50ms, high 50ms, then relink.
+#[test]
+fn sync_loss_resets_nrf_nonblocking() {
+    let mut m = Mock::new();
+    let mut kb = wireless(&mut m);
+    m.nrf_auto = false;
+    m.reset_log.clear();
+    run(&mut kb, &mut m, 2400);
+    let lows: Vec<u32> = m.reset_log.iter().filter(|e| !e.1).map(|e| e.0).collect();
+    assert_eq!(lows.len(), 1);
+    let high = m.reset_log.iter().find(|e| e.1 && e.0 > lows[0]).unwrap().0;
+    assert_eq!(high - lows[0], 50);
+    assert!(m.sent(CMD_SET_LINK).iter().count() >= 1, "relinks after reset");
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// sleep.c
+// ═════════════════════════════════════════════════════════════════════════
+
+/// Connected and idle for 6 minutes: SET_CONFIG to the NRF and LED power off.
+/// A held key counts as activity.
+#[test]
+fn wireless_idle_sleep_and_held_key() {
+    let mut m = Mock::new();
+    let mut kb = wireless(&mut m);
+    kb.matrix_event(&mut m, KEY_A.0, KEY_A.1, true);
+    run(&mut kb, &mut m, 370_000);
+    assert!(!kb.f_wakeup_prepare, "held key keeps it awake");
+    kb.matrix_event(&mut m, KEY_A.0, KEY_A.1, false);
+    run(&mut kb, &mut m, 361_000);
+    assert!(kb.f_wakeup_prepare);
+    assert!(!m.led_on);
+    assert_eq!(m.sent(CMD_SET_CONFIG).len(), 1);
+    // Key wake: rf_wake() handshake + status, LEDs back on.
+    m.tx.clear();
+    kb.matrix_event(&mut m, KEY_A.0, KEY_A.1, true);
+    run(&mut kb, &mut m, 100);
+    assert!(m.led_on && !kb.f_wakeup_prepare);
+    assert!(!m.sent(CMD_HAND).is_empty());
+}
+
+/// USB suspended for 1s → sleep; host resume wakes and clears key state.
+#[test]
+fn usb_suspend_sleep_and_resume() {
+    let mut m = Mock::new();
+    let mut kb = boot(&mut m);
+    run(&mut kb, &mut m, 100);
+    m.usb_suspended = true;
+    run(&mut kb, &mut m, 900);
+    assert!(!kb.f_wakeup_prepare, "debounced for 1s");
+    run(&mut kb, &mut m, 200);
+    assert!(kb.f_wakeup_prepare && !m.led_on);
+    m.usb_suspended = false;
+    run(&mut kb, &mut m, 100);
+    assert!(!kb.f_wakeup_prepare && m.led_on);
+}
+
+/// A stray sleep request while the USB host is active is rejected.
+#[test]
+fn usb_active_rejects_sleep_request() {
+    let mut m = Mock::new();
+    let mut kb = boot(&mut m);
+    kb.f_goto_sleep = true;
+    run(&mut kb, &mut m, 100);
+    assert!(!kb.f_wakeup_prepare && m.led_on);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// ansi.c — dial, link keys, device reset
+// ═════════════════════════════════════════════════════════════════════════
+
+/// The dial must read the same for 25 × 20ms before the link switches.
+#[test]
+fn dial_switch_debounced() {
+    let mut m = Mock::new();
+    m.nrf_saved = [LINK_BT_1, LINK_BT_1, LINK_BT_1];
+    let mut kb = boot(&mut m);
+    assert_eq!(kb.dev_info.link_mode, LINK_USB);
+    m.dev_pin = false;
+    run(&mut kb, &mut m, 480);
+    assert_eq!(kb.dev_info.link_mode, LINK_USB);
+    run(&mut kb, &mut m, 60);
+    assert_eq!(kb.dev_info.link_mode, LINK_BT_1);
+}
+
+/// Short link-key tap switches channel at once; holding 3s starts pairing
+/// and retries NEW_ADV twice while the radio hasn't acknowledged.
+#[test]
+fn link_key_tap_switches_hold_pairs() {
+    let mut m = Mock::new();
+    let mut kb = wireless(&mut m);
+    kb.matrix_event(&mut m, KEY_FN.0, KEY_FN.1, true);
+    tap(&mut kb, &mut m, 1, 3); // Fn+3 = BLE3
+    assert_eq!(kb.dev_info.link_mode, LINK_BT_3);
+    assert_eq!(m.sent(CMD_SET_LINK).last().unwrap()[4], LINK_BT_3);
+
+    m.nrf_auto = false;
+    m.tx.clear();
+    kb.matrix_event(&mut m, 1, 2, true); // Fn+2 = BLE2, hold
+    run(&mut kb, &mut m, 3200);
+    assert_eq!(kb.dev_info.link_mode, LINK_BT_2);
+    assert_eq!(m.sent(CMD_NEW_ADV).len(), 3, "NEW_ADV + 2 retries");
+    kb.matrix_event(&mut m, 1, 2, false);
+    assert_eq!(kb.dev_info.link_mode, LINK_BT_2);
+}
+
+/// Link keys do nothing while wired.
+#[test]
+fn link_keys_ignored_on_usb() {
+    let mut m = Mock::new();
+    let mut kb = boot(&mut m);
+    kb.matrix_event(&mut m, KEY_FN.0, KEY_FN.1, true);
+    tap(&mut kb, &mut m, KEY_4.0, KEY_4.1); // Fn+4 = LNK_RF
+    assert_eq!(kb.dev_info.link_mode, LINK_USB);
+}
+
+/// Holding Fn+[ for 3s: SET_LINK, CLR_DEVICE, eeconfig_init, three blinks,
+/// side/RGB defaults (speed 255 − 2×52).
+#[test]
+fn device_reset() {
+    let mut m = Mock::new();
+    let mut kb = boot(&mut m);
+    kb.rgb.speed = 10;
+    kb.matrix_event(&mut m, KEY_FN.0, KEY_FN.1, true);
+    kb.matrix_event(&mut m, 2, 11, true);
+    run(&mut kb, &mut m, 3100);
+    assert_eq!(m.ee_inits, 1);
+    assert_eq!(m.flushes, 6);
+    assert!(!m.sent(CMD_CLR_DEVICE).is_empty());
+    assert_eq!(kb.rgb.speed, 151);
+    assert_eq!((kb.rgb.hue, kb.rgb.sat, kb.rgb.val), (255, 255, 151));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// NumLock (v3.2.9)
+// ═════════════════════════════════════════════════════════════════════════
+
+fn numlock_presses(m: &Mock) -> usize {
+    m.usb_nkro.windows(2).filter(|w| !nkro_has(&w[0].1, KC_NUM_LOCK) && nkro_has(&w[1].1, KC_NUM_LOCK)).count()
+}
+
+/// Power-on wired: NumLock turned on once after the host settles; a user's
+/// NumLock-off is respected until the next re-enumeration (PC restart).
+#[test]
+fn numlock_on_at_power_on_and_pc_restart() {
+    let mut m = Mock::new();
+    let mut kb = boot(&mut m);
+    run(&mut kb, &mut m, 1900);
+    assert_eq!(numlock_presses(&m), 0);
+    run(&mut kb, &mut m, 300);
+    assert_eq!(numlock_presses(&m), 1);
+    assert_eq!(m.usb_leds & 1, 1);
+    m.usb_leds = 0;
+    run(&mut kb, &mut m, 5000);
+    assert_eq!(numlock_presses(&m), 1, "user's choice respected");
+    kb.notify_usb_device_state_change_kb(UsbDeviceState::Init);
+    kb.notify_usb_device_state_change_kb(UsbDeviceState::Configured);
+    run(&mut kb, &mut m, 2200);
+    assert_eq!(numlock_presses(&m), 2);
+    assert_eq!(m.usb_leds & 1, 1);
+}
+
+/// macOS has no NumLock (the key is Clear): never pressed in Mac mode.
+#[test]
+fn numlock_skipped_in_mac_mode() {
+    let mut m = Mock::new();
+    m.sys_pin = true;
+    let mut kb = boot(&mut m);
+    run(&mut kb, &mut m, 5000);
+    assert_eq!(numlock_presses(&m), 0);
+}
+
+/// Wireless reconnect re-applies NumLock on via the radio's LED report.
+#[test]
+fn numlock_on_wireless_reconnect() {
+    let mut m = Mock::new();
+    let mut kb = wireless(&mut m);
+    m.nrf_led = 0;
+    run(&mut kb, &mut m, 2500);
+    // NumLock presses = rising edges of its bit in the bitmap frames.
+    let num_frames = |m: &Mock| {
+        let down: Vec<bool> = m.sent(CMD_RPT_BIT_KB).iter().map(|f| f[4 + 1 + 0x53 / 8] & (1 << (0x53 % 8)) != 0).collect();
+        down.windows(2).filter(|w| !w[0] && w[1]).count() + down.first().map_or(0, |&d| d as usize)
+    };
+    assert_eq!(num_frames(&m), 1);
+    m.nrf_led = 1;
+    m.nrf_state = RF_DISCONNECT;
+    run(&mut kb, &mut m, 600);
+    m.nrf_led = 0;
+    m.nrf_state = RF_CONNECT;
+    run(&mut kb, &mut m, 2600);
+    assert_eq!(num_frames(&m), 2);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// side.c
+// ═════════════════════════════════════════════════════════════════════════
+
+/// Caps Lock lights the left bar from the active host only (USB LEDs when
+/// wired), not from a stale radio LED byte.
+#[test]
+fn caps_indicator_follows_active_host() {
+    let mut m = Mock::new();
+    let mut kb = boot(&mut m);
+    run(&mut kb, &mut m, 4000); // past the link-show window
+    kb.dev_info.rf_led = 0x02;
+    run(&mut kb, &mut m, 20);
+    let (b1, b2) = kb.rgb.build_pwm_buffers();
+    let left = |b1: &[u8; 192], b2: &[u8; 192]| {
+        let l = &rgb::LED_MAP[100];
+        let b = if l.driver == 0 { b1 } else { b2 };
+        [b[l.r as usize], b[l.g as usize], b[l.b as usize]]
+    };
+    assert_ne!(left(&b1, &b2), [0, 128, 128]);
+    m.usb_leds = 0x02;
+    run(&mut kb, &mut m, 20);
+    let (b1, b2) = kb.rgb.build_pwm_buffers();
+    assert_eq!(left(&b1, &b2), [0, 128, 128]);
+}
+
+/// Side speed/brightness controls clamp and persist, like light_*_control().
+#[test]
+fn side_controls_clamp_and_persist() {
+    let mut m = Mock::new();
+    let mut kb = boot(&mut m);
+    let n = m.cfgs.len();
+    for _ in 0..10 {
+        kb.light_level_control(&mut m, true);
+    }
+    assert_eq!(kb.side.side_light, 5);
+    assert_eq!(m.cfgs.len(), n + 2, "no write once clamped");
+    kb.side.side_speed = 9;
+    kb.light_speed_control(&mut m, true);
+    assert_eq!(kb.side.side_speed, 1, "out-of-range resets to middle first");
+}
+
+/// Side LEDs (flags 0) are never painted by RGB effects.
+#[test]
+fn rgb_effects_leave_side_leds() {
+    let mut r = rgb::RgbMatrix::new();
+    r.set_mode(12);
+    r.set_color(100, 1, 2, 3);
+    for t in 0..200 {
+        r.rgb_matrix_task(t, |_| true);
+    }
+    assert_eq!(r.color(100), [1, 2, 3]);
+    assert_ne!(r.color(0), [0, 0, 0]);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Debounce (asym_eager_defer_pk, DEBOUNCE=10)
+// ═════════════════════════════════════════════════════════════════════════
+
+/// Press reports on the first scan; contact chatter after it is absorbed;
+/// release reports only after 10ms stable; quick distinct taps stay distinct.
+#[test]
+fn debounce_eager_press_deferred_release() {
+    let mut mx = Matrix::new();
+    let key = |down: bool| {
+        let mut r = [0u32; MATRIX_ROWS];
+        if down {
+            r[0] = 1;
+        }
+        r
+    };
+    let mut events = vec![];
+    // t=0 press, chatter 1..5, held to 40, chatter release 40..45, then idle.
+    for t in 0..120u16 {
+        let down = match t {
+            0..=1 => true,
+            2 => false,
+            3..=39 => true,
+            40 | 42 | 44 => false,
+            41 | 43 => true,
+            45..=59 => false,
+            60..=79 => true,
+            _ => false,
+        };
+        for e in mx.process(key(down), t) {
+            events.push((t, e.pressed));
+        }
+    }
+    assert_eq!(events[0], (0, true), "zero-latency press");
+    assert_eq!(events.len(), 4, "{events:?}");
+    assert!(events[1].0 >= 54 && !events[1].1, "release after 10ms stable");
+    assert_eq!(events[2], (60, true));
+}
+
+#[test]
+fn debouncer_ignores_unchanged_matrix() {
+    let mut d = Debouncer::new();
+    let raw = [0u32; MATRIX_ROWS];
+    let mut cooked = [0u32; MATRIX_ROWS];
+    assert!(!d.debounce(&raw, &mut cooked, false, 5));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Keymap (layers verified against keymap.c by script)
+// ═════════════════════════════════════════════════════════════════════════
+
 #[allow(clippy::identity_op)]
-#[test] fn mo_layer() {
-    assert_eq!(keymap::mo_layer(keymap::MO | 0), Some(0));
-    assert_eq!(keymap::mo_layer(keymap::MO | 1), Some(1));
-    assert_eq!(keymap::mo_layer(keymap::MO | 4), Some(4));
+#[test]
+fn mo_layer() {
+    assert_eq!(keymap::mo_layer(keymap::QK_MOMENTARY | 0), Some(0));
+    assert_eq!(keymap::mo_layer(keymap::QK_MOMENTARY | 4), Some(4));
     assert_eq!(keymap::mo_layer(0x0000), None);
 }
-#[test] fn is_custom() {
-    assert!(keymap::is_custom(0x5C00)); assert!(keymap::is_custom(0x5C35));
-    assert!(!keymap::is_custom(0x0004)); assert!(!keymap::is_custom(0x00E0));
+#[test]
+fn win_layer_keys() {
+    assert_eq!(keymap::get_keycode(2, 0, 2), 0x003A);
+    assert_eq!(keymap::get_keycode(2, 0, 14), 0x0046);
+    assert_eq!(keymap::get_keycode(2, KEY_NUM.0 as usize, KEY_NUM.1 as usize), 0x53);
+    assert_eq!(keymap::get_keycode(0, ESC.0 as usize, ESC.1 as usize), 0x29);
 }
-#[test] fn mac_task() { assert_eq!(keymap::resolve_keycode(&[0], 0, 4), keymap::KC_MAC_TASK); }
-#[test] fn win_f1() { assert_eq!(keymap::get_keycode(2, 0, 2), 0x003A); }
-#[test] fn win_pscr() { assert_eq!(keymap::resolve_keycode(&[2], 0, 14), 0x0046); }
-#[test] fn mac_fn_lnk_rf() { assert_eq!(keymap::resolve_keycode(&[1], 1, 4), keymap::KC_LNK_RF); }
-#[test] fn transparent_fallthrough() { assert_eq!(keymap::resolve_keycode(&[4,3,2,0], 0, 0), 0x0029); }
-#[test] fn all_transparent_is_kc_no() { assert_eq!(keymap::resolve_keycode(&[4], 0, 2), keymap::KC_NO); }
-#[test] fn out_of_bounds() { assert_eq!(keymap::get_keycode(0, 99, 99), keymap::KC_NO); assert_eq!(keymap::get_keycode(99, 0, 0), keymap::KC_NO); }
-
-// ===== KEYMAP CONSUMER KEYS =====
-#[test] fn consumer_usage_mapping() {
+#[test]
+fn consumer_usage_mapping() {
     assert_eq!(keymap::consumer_usage(keymap::KC_BRID), 0x0070);
     assert_eq!(keymap::consumer_usage(keymap::KC_BRIU), 0x006F);
     assert_eq!(keymap::consumer_usage(keymap::KC_MPRV), 0x00B6);
@@ -201,539 +926,77 @@ use crate::config::eeprom;
     assert_eq!(keymap::consumer_usage(keymap::KC_VOLD), 0x00EA);
     assert_eq!(keymap::consumer_usage(keymap::KC_VOLU), 0x00E9);
 }
-#[test] fn is_consumer_key_range() {
-    assert!(keymap::is_consumer_key(keymap::KC_BRID));
-    assert!(keymap::is_consumer_key(keymap::KC_VOLU));
-    assert!(!keymap::is_consumer_key(keymap::KC_MAC_TASK));
-}
-#[test] fn mac_media_keys_in_row0() {
-    let r = &keymap::LAYER_MAC[0];
-    assert_eq!(r[2], keymap::KC_BRID); assert_eq!(r[3], keymap::KC_BRIU);
-    assert_eq!(r[8], keymap::KC_MPRV); assert_eq!(r[9], keymap::KC_MPLY);
-    assert_eq!(r[10], keymap::KC_MNXT); assert_eq!(r[11], keymap::KC_MUTE);
-    assert_eq!(r[12], keymap::KC_VOLD); assert_eq!(r[13], keymap::KC_VOLU);
-}
-#[test] fn win_fn_media_keys() {
-    let r = &keymap::LAYER_WIN_FN[0];
-    assert_eq!(r[2], keymap::KC_BRID); assert_eq!(r[8], keymap::KC_MPRV);
-}
 
-// ===== KEYMAP RGB CONTROLS =====
-#[test] fn mac_fn_rgb_controls() {
-    assert_eq!(keymap::LAYER_MAC_FN[2][13], keymap::KC_BAT_SHOW);
-    assert_eq!(keymap::LAYER_MAC_FN[4][8], keymap::MO | 4);
-    assert_eq!(keymap::LAYER_MAC_FN[4][9], keymap::KC_RGB_SPD);
-    assert_eq!(keymap::LAYER_MAC_FN[4][10], keymap::KC_RGB_SPI);
-    assert_eq!(keymap::LAYER_MAC_FN[4][15], keymap::KC_RGB_VAI);
-    assert_eq!(keymap::LAYER_MAC_FN[5][14], keymap::KC_RGB_MOD); // fn+LEFT
-    assert_eq!(keymap::LAYER_MAC_FN[5][15], keymap::KC_RGB_VAD); // fn+DOWN
-    assert_eq!(keymap::LAYER_MAC_FN[5][16], keymap::KC_RGB_HUI); // fn+RIGHT
-}
-#[test] fn win_fn_rgb_controls() {
-    assert_eq!(keymap::LAYER_WIN_FN[2][13], keymap::KC_BAT_SHOW);
-    assert_eq!(keymap::LAYER_WIN_FN[4][8], keymap::MO | 4);
-    assert_eq!(keymap::LAYER_WIN_FN[5][14], keymap::KC_RGB_MOD); // fn+LEFT
-    assert_eq!(keymap::LAYER_WIN_FN[5][15], keymap::KC_RGB_VAD); // fn+DOWN
-    assert_eq!(keymap::LAYER_WIN_FN[5][16], keymap::KC_RGB_HUI); // fn+RIGHT
-}
-#[test] fn fn_layer_side_controls() {
-    assert_eq!(keymap::LAYER_FN[4][4], keymap::KC_RGB_TEST);
-    assert_eq!(keymap::LAYER_FN[4][9], keymap::KC_SIDE_SPD);
-    assert_eq!(keymap::LAYER_FN[5][14], keymap::KC_SIDE_MOD);
-    assert_eq!(keymap::LAYER_FN[5][15], keymap::KC_SIDE_VAD);
-    assert_eq!(keymap::LAYER_FN[5][16], keymap::KC_SIDE_HUI);
-}
+// ═════════════════════════════════════════════════════════════════════════
+// RGB driver / EEPROM / USB descriptors
+// ═════════════════════════════════════════════════════════════════════════
 
-// ===== REPORTS =====
-#[test] fn keyboard_builds_frame() {
-    let mut p = UartProtocol::new(); p.link_mode = LinkMode::Rf24;
-    assert!(report::send_keyboard(&mut p, 0x01, &[0x04, 0, 0, 0, 0, 0]) > 0);
-}
-#[test] fn keyboard_noop_usb() {
-    let mut p = UartProtocol::new(); p.link_mode = LinkMode::Usb;
-    assert_eq!(report::send_keyboard(&mut p, 0, &[0; 6]), 0);
-}
-#[test] fn consumer_sets_cmd() {
-    let mut p = UartProtocol::new(); p.link_mode = LinkMode::Rf24;
-    report::send_consumer(&mut p, 0x00CF);
-    assert_eq!(p.tx_buf[1], CMD_RPT_CONSUME);
-}
-#[test] fn system_sets_cmd() {
-    let mut p = UartProtocol::new(); p.link_mode = LinkMode::Rf24;
-    report::send_system(&mut p, 0x009B);
-    assert_eq!(p.tx_buf[1], CMD_RPT_SYS);
-}
-#[test] fn mouse_sets_cmd() {
-    let mut p = UartProtocol::new(); p.link_mode = LinkMode::Rf24;
-    report::send_mouse(&mut p, 0x01, 10, -5, 0, 0);
-    assert_eq!(p.tx_buf[1], CMD_RPT_MS); assert_eq!(p.tx_buf[3], 5);
-}
-#[test] fn nkro_modifier_change() {
-    let mut p = UartProtocol::new(); p.bitkb_report_buf = [0; 32];
-    let mut now = [0u8; 32]; now[0] = 0x01;
-    assert!(p.auto_nkey_send(&now));
-}
-#[test] fn nkro_no_change() {
-    let mut p = UartProtocol::new(); p.bitkb_report_buf = [0; 32];
-    assert!(!p.auto_nkey_send(&[0; 32]));
-}
-#[test] fn nkro_key_press_fills_byte_buf() {
-    let mut p = UartProtocol::new(); p.bitkb_report_buf = [0; 32];
-    let mut now = [0u8; 32]; now[2] = 0x01;
-    assert!(p.auto_nkey_send(&now));
-    assert_eq!(p.bytekb_report_buf[2], 8);
-}
-#[test] fn nkro_key_release_from_byte_buf() {
-    let mut p = UartProtocol::new();
-    p.bytekb_report_buf[2] = 8; p.bitkb_report_buf[2] = 0x01;
-    let now = [0u8; 32];
-    assert!(p.auto_nkey_send(&now));
-    assert_eq!(p.bytekb_report_buf[2], 0);
-}
-#[test] fn nkro_overflow_bit_report() {
-    let mut p = UartProtocol::new(); p.bitkb_report_buf = [0; 32];
-    for i in 2..8 { p.bytekb_report_buf[i] = i as u8 + 10; }
-    let mut now = [0u8; 32]; now[2] = 0x01;
-    assert!(p.auto_nkey_send(&now));
-    assert!(p.f_bit_kb_act);
-}
-
-// ===== SLEEP =====
-#[test] fn sleep_constants() {
-    assert_eq!(sleep::SLEEP_TIME_DELAY, 36000);
-    assert_eq!(sleep::LINK_TIMEOUT, 12000);
-    assert_eq!(sleep::POWER_DOWN_DELAY, 24);
-}
-#[test] fn sleep_new_state() {
-    let s = sleep::SleepManager::new();
-    assert_eq!(s.no_act_time, 0); assert!(s.sleep_enabled); assert!(!s.f_goto_sleep);
-}
-#[test] fn sleep_on_activity_resets() {
-    let mut s = sleep::SleepManager::new(); s.no_act_time = 500;
-    s.on_activity(); assert_eq!(s.no_act_time, 0);
-}
-#[test] fn sleep_tick_10ms_increments() {
-    let mut s = sleep::SleepManager::new();
-    s.tick_10ms(); assert_eq!(s.no_act_time, 1); assert_eq!(s.rf_linking_time, 1);
-}
-#[test] fn sleep_goto_sleep_sets_wakeup() {
-    let mut s = sleep::SleepManager::new(); s.f_goto_sleep = true;
-    // Wireless link so the USB-active guard doesn't reject the sleep.
-    let mut p = UartProtocol::new(); p.link_mode = LinkMode::Bt1;
-    s.tick(&mut p, false);
-    assert!(!s.f_goto_sleep); assert!(s.f_wakeup_prepare);
-}
-#[test] fn sleep_usb_active_rejects_goto_sleep() {
-    // USB link + host NOT suspended → reject sleep, do NOT power down.
-    let mut s = sleep::SleepManager::new(); s.f_goto_sleep = true;
-    s.tick(&mut UartProtocol::new(), false); // default link_mode = Usb
-    assert!(!s.f_goto_sleep); assert!(!s.f_wakeup_prepare);
-}
-#[test] fn sleep_disabled_blocks_connected_idle_sleep() {
-    // Connected + idle past threshold but sleep disabled → no sleep request.
-    let mut s = sleep::SleepManager::new(); s.sleep_enabled = false;
-    s.no_act_time = sleep::SLEEP_TIME_DELAY;
-    let mut p = UartProtocol::new(); p.link_mode = LinkMode::Bt1; p.rf_state = RfState::Connect;
-    s.tick(&mut p, false);
-    assert!(!s.f_goto_sleep);
-    // Same state with sleep enabled MUST request sleep.
-    let mut s2 = sleep::SleepManager::new(); s2.sleep_enabled = true;
-    s2.no_act_time = sleep::SLEEP_TIME_DELAY;
-    let mut p2 = UartProtocol::new(); p2.link_mode = LinkMode::Bt1; p2.rf_state = RfState::Connect;
-    s2.tick(&mut p2, false);
-    assert!(s2.f_goto_sleep);
-}
-#[test] fn sleep_wakeup_clears_on_activity() {
-    let mut s = sleep::SleepManager::new(); s.f_wakeup_prepare = true; s.no_act_time = 5;
-    s.tick(&mut UartProtocol::new(), false);
-    assert!(!s.f_wakeup_prepare);
-}
-#[test] fn sleep_wakeup_on_usb_resume() {
-    let mut s = sleep::SleepManager::new();
-    s.f_wakeup_prepare = true;
-    s.no_act_time = 500;
-    let mut p = UartProtocol::new();
-    p.link_mode = LinkMode::Usb;
-    s.tick(&mut p, false);
-    assert!(!s.f_wakeup_prepare);
-}
-
-
-// ===== SIDE LEDS =====
-#[test] fn side_mode_constants() {
-    assert_eq!(side::SIDE_WAVE, 0); assert_eq!(side::SIDE_MIX, 1);
-    assert_eq!(side::SIDE_STATIC, 2); assert_eq!(side::SIDE_BREATH, 3); assert_eq!(side::SIDE_OFF, 4);
-}
-#[test] fn side_colour_lib() {
-    assert_eq!(side::COLOUR_LIB.len(), 9);
-    assert_eq!(side::COLOUR_LIB[0], [0xFF, 0x00, 0x00]);
-    assert_eq!(side::COLOUR_LIB[3], [0x00, 0xFF, 0x00]);
-    assert_eq!(side::COLOUR_LIB[5], [0x00, 0x00, 0xFF]);
-}
-#[test] fn side_new_state() {
-    let sl = side::SideLeds::new();
-    assert_eq!(sl.mode, side::SIDE_WAVE); assert_eq!(sl.brightness, 3);
-    assert_eq!(sl.speed, 2); assert_eq!(sl.colour, 0); assert!(sl.rgb_enabled);
-}
-#[test] fn side_blink_rf() {
-    let mut sl = side::SideLeds::new();
-    sl.blink_rf(3);
-    assert_eq!(sl.rf_link_show_time, 0);
-}
-#[test] fn side_reset() {
-    let mut sl = side::SideLeds::new();
-    sl.mode = 3; sl.brightness = 5; sl.speed = 4; sl.colour = 7;
-    sl.reset();
-    assert_eq!(sl.mode, 0); assert_eq!(sl.brightness, 3);
-    assert_eq!(sl.speed, 2); assert_eq!(sl.colour, 0); assert!(sl.rgb_enabled);
-}
-#[test] fn side_battery_indicator_color_coding() {
-    let mut sl = side::SideLeds::new();
-
-    // 15% (very low) -> Red (128,0,0), only 1 LED on right side (index 9) active
-    sl.bat_percent_led(15);
-    assert_eq!(sl.output[9], [128, 0, 0]);
-    assert_eq!(sl.output[8], [0, 0, 0]);
-    assert_eq!(sl.output[5], [0, 0, 0]);
-
-    // 45% (medium) -> Orange (128,64,0), 3 LEDs active (indices 9, 8, 7)
-    sl.bat_percent_led(45);
-    assert_eq!(sl.output[9], [128, 64, 0]);
-    assert_eq!(sl.output[8], [128, 64, 0]);
-    assert_eq!(sl.output[7], [128, 64, 0]);
-    assert_eq!(sl.output[6], [0, 0, 0]);
-
-    // 75% (above 50%) -> Green (0,128,0), all 5 LEDs active (indices 9..=5)
-    sl.bat_percent_led(75);
-    for i in 5..10 {
-        assert_eq!(sl.output[i], [0, 128, 0]);
-    }
-
-    // 98% (full) -> Green (0,128,0), all 5 LEDs active (indices 9..=5)
-    sl.bat_percent_led(98);
-    for i in 5..10 {
-        assert_eq!(sl.output[i], [0, 128, 0]);
+#[test]
+fn led_map_110() {
+    assert_eq!(rgb::LED_MAP.len(), 110);
+    for i in 100..110 {
+        assert_eq!(rgb::LED_MAP[i].driver, 1);
     }
 }
-#[test] fn side_battery_indicator_hold_override() {
-    let mut sl = side::SideLeds::new();
-    sl.mode = side::SIDE_STATIC;
-    sl.colour = 5; // blue
-    sl.rf_link_show_time = 3000; // prevent link mode override
-    sl.play_cnt = 100; // allow animation update
-    let mut p = UartProtocol::new();
-    p.rf_battery = 45; // medium orange battery
-
-    // First standard update to clear bat_init
-    let mut bat_hold = false;
-    sl.update(&p, 1, 0, &mut bat_hold);
-
-    // Standard update with bat_hold = false after timeout -> displays scaled blue color
-    sl.play_cnt = 100; // allow animation update
-    sl.update(&p, 6000, 0, &mut bat_hold);
-    assert_eq!(sl.output[0], [0, 0, 96]);
-    assert_eq!(sl.output[9], [0, 0, 96]);
-
-    // Update with bat_hold = true -> overrides right side to orange battery display
-    sl.play_cnt = 100; // allow animation update
-    bat_hold = true;
-    sl.update(&p, 1, 0, &mut bat_hold);
-    assert_eq!(sl.output[9], [128, 64, 0]);
-    assert_eq!(sl.output[0], [0, 0, 96]);
-    assert!(bat_hold, "f_bat_hold should remain true within 10s window");
-
-    // Auto-clear after 10s continuous hold (port of side.c:817-830)
-    sl.play_cnt = 100;
-    sl.update(&p, 11_000, 0, &mut bat_hold);
-    assert!(!bat_hold, "f_bat_hold should auto-clear after 10s");
-}
-
-
-
-// ===== RGB DRIVER =====
-#[test] fn led_map_110() { assert_eq!(rgb::LED_MAP.len(), 110); }
-#[test] fn led0_driver0() { assert_eq!(rgb::LED_MAP[0].driver, 0); }
-#[test] fn side_leds_driver1() { for i in 100..110 { assert_eq!(rgb::LED_MAP[i].driver, 1); } }
-#[test] fn no_all_zero_entries() {
-    for i in 0..110 {
-        let l = &rgb::LED_MAP[i];
+#[test]
+fn no_all_zero_entries() {
+    for (i, l) in rgb::LED_MAP.iter().enumerate() {
         assert!(!(l.r == 0 && l.g == 0 && l.b == 0), "LED {} all zero", i);
     }
 }
-#[test] fn set_hsv_red() {
-    let mut m = rgb::RgbMatrix::new(); m.set_hsv(0, 255, 255);
-    let (b1, _) = m.build_pwm_buffers();
-    let r = rgb::LED_MAP[0].r as usize; let g = rgb::LED_MAP[0].g as usize;
-    assert!(b1[r] > 200); assert!(b1[g] < 20);
-}
-#[test] fn set_color_marks_dirty() {
-    let mut m = rgb::RgbMatrix::new(); m.dirty1 = false; m.dirty2 = false;
-    m.set_color(0, 255, 0, 0); assert!(m.needs_flush());
-    let _ = m.build_pwm_buffers();
-    m.dirty1 = false; m.dirty2 = false; // Mimics successful I2C write confirmation
-    assert!(!m.needs_flush());
-}
-#[test] fn build_pwm_buffers_driver1() {
-    let mut m = rgb::RgbMatrix::new(); m.set_all(0x10, 0x20, 0x30);
-    let (_b1, b2) = m.build_pwm_buffers();
-    let l10 = &rgb::LED_MAP[10]; assert_eq!(l10.driver, 1);
-    assert_eq!(b2[l10.r as usize], 0x10);
-}
-#[test] fn hsv_blue() {
-    let mut m = rgb::RgbMatrix::new(); m.set_hsv(170, 255, 255);
-    let (b1, _) = m.build_pwm_buffers();
-    let r = rgb::LED_MAP[0].r as usize; let b = rgb::LED_MAP[0].b as usize;
-    assert!(b1[b] > b1[r]);
-}
-
-// ===== EEPROM =====
-#[test] fn eeprom_defaults() {
+#[test]
+fn eeprom_defaults() {
     let c = eeprom::UserConfig::default();
-    assert_eq!(c.side_mode, 0); assert_eq!(c.side_brightness, 3);
-    assert_eq!(c.side_speed, 2); assert!(c.side_rgb); assert!(c.sleep_enable);
-    assert_eq!(c.rgb_mode, 12); assert_eq!(c.rgb_hue, 255);
-    assert_eq!(c.rgb_sat, 255); assert_eq!(c.rgb_val, 151);
-    assert_eq!(c.rgb_speed, 127); assert!(c.rgb_enabled);
+    assert_eq!((c.side_mode, c.side_brightness, c.side_speed), (0, 3, 2));
+    assert_eq!((c.rgb_mode, c.rgb_hue, c.rgb_sat, c.rgb_val, c.rgb_speed), (12, 255, 255, 151, 127));
 }
 
-// ===== USB HID REPORT TYPES =====
-// Verify all report structs exist and have correct fields (compile-time checks)
-
+/// Dump rendered frames in the same format as the QMK harness
+/// (tools/rgb_harness): `RGB_DUMP=path cargo test dump_rgb_frames -- --ignored`.
+/// Each frame is driven through `rgb_matrix_task()` until its flush, with key
+/// presses at fixed times for the reactive effects, exactly as the harness does.
 #[test]
-fn keyboard_report_struct() {
-    use usbd_hid::descriptor::KeyboardReport;
-    let r = KeyboardReport { modifier: 0x01, reserved: 0, leds: 0, keycodes: [0; 6] };
-    let m = r.modifier;
-    assert_eq!(m, 0x01);
-}
-
-#[test]
-fn media_keyboard_report_struct() {
-    use usbd_hid::descriptor::MediaKeyboardReport;
-    let r = MediaKeyboardReport { usage_id: 0x00EA };
-    let v = r.usage_id;
-    assert_eq!(v, 0x00EA); // Volume Down
-}
-
-#[test]
-fn system_control_report_struct() {
-    use usbd_hid::descriptor::SystemControlReport;
-    let r = SystemControlReport { usage_id: 0x9B };
-    let v = r.usage_id;
-    assert_eq!(v, 0x9B); // Do Not Disturb
-}
-
-#[test]
-fn windows_hid_extra_descriptors_are_qmk_bounded() {
-    let system = crate::usb_hid::SYSTEM_DESC;
-    assert_eq!(
-        system,
-        &[
-            0x05, 0x01, 0x09, 0x80, 0xA1, 0x01, 0x19, 0x01, 0x2A, 0xB7, 0x00,
-            0x15, 0x01, 0x26, 0xB7, 0x00, 0x95, 0x01, 0x75, 0x10, 0x81, 0x00,
-            0xC0,
-        ]
-    );
-
-    let consumer = crate::usb_hid::CONSUMER_DESC;
-    assert_eq!(
-        consumer,
-        &[
-            0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x19, 0x01, 0x2A, 0xA0, 0x02,
-            0x15, 0x01, 0x26, 0xA0, 0x02, 0x95, 0x01, 0x75, 0x10, 0x81, 0x00,
-            0xC0,
-        ]
-    );
-
-    // Windows rejects the previous generated u16-array descriptors: the macro
-    // emitted LOGICAL_MAXIMUM = 65535 and, for System, a stray reserved Main item.
-    for desc in [system, consumer] {
-        assert!(
-            !desc.windows(5).any(|w| w == [0x27, 0xFF, 0xFF, 0x00, 0x00]),
-            "extra HID descriptor must not use generated u16 logical max"
-        );
-        assert!(
-            !desc.windows(2).any(|w| w == [0x11, 0x01]),
-            "extra HID descriptor must not contain reserved Main item"
-        );
-    }
-}
-
-#[test]
-fn consumer_report_usage_values() {
-    // Verify the consumer usage codes we send are in valid ranges
-    assert_eq!(0x0070, 0x0070); // Brightness Down
-    assert_eq!(0x00E9, 0x00E9); // Volume Up
-    assert_eq!(0x00CD, 0x00CD); // Play/Pause
-}
-
-#[allow(clippy::assertions_on_constants)]
-#[test]
-fn system_report_usage_values() {
-    // System control usage codes (HUT 1.12, §4.6)
-    // 0x81 = System Power Down, 0x9B = Do Not Disturb
-    assert!(0x81u8 <= 0x9B);
-    assert!(0x9Bu8 >= 0x81);
-}
-
-#[test]
-fn boot_keyboard_descriptor_and_reports() {
-    let desc = crate::usb_hid::BOOT_KEYBOARD_DESC;
-
-    // Boot keyboard descriptor: single Generic-Desktop/Keyboard collection,
-    // NO Report ID (so BIOS reads the bare 8-byte report).
-    assert_eq!(desc[0], 0x05); // USAGE_PAGE (Generic Desktop)
-    assert_eq!(desc[1], 0x01);
-    assert_eq!(desc[2], 0x09); // USAGE (Keyboard)
-    assert_eq!(desc[3], 0x06);
-    assert_eq!(desc[4], 0xA1); // COLLECTION (Application)
-    assert_eq!(desc[5], 0x01);
-    // The very next item must be the modifier usage page (0x05,0x07), i.e. there
-    // is NO 0x85 (REPORT_ID) prefix anywhere — that is the whole point.
-    assert_eq!(desc[6], 0x05);
-    assert_eq!(desc[7], 0x07);
-    assert!(!desc.windows(1).any(|w| w[0] == 0x85), "boot kbd must have no Report ID");
-
-    // VIA RAW HID descriptor: vendor page 0xFF60, usage 0x61, no Report ID.
-    let via = crate::usb_hid::VIA_DESC;
-    assert_eq!(via[0], 0x06); // USAGE_PAGE (Vendor 0xFF60)
-    assert_eq!(via[1], 0x60);
-    assert_eq!(via[2], 0xFF);
-    assert_eq!(via[3], 0x09); // USAGE (0x61)
-    assert_eq!(via[4], 0x61);
-    assert_eq!(via[5], 0xA1); // COLLECTION (Application)
-    assert!(!via.windows(1).any(|w| w[0] == 0x85), "VIA must have no Report ID");
-
-    // Verify boot keyboard report serialization format: 8 bytes, no Report ID.
-    //   byte 0 = modifiers, byte 1 = reserved, bytes 2..8 = keycodes.
-    let modifiers = 0x05; // Ctrl + Alt
-    let keys = [0x04, 0x05, 0x06, 0x00, 0x00, 0x00];
-
-    let mut report = [0u8; 8];
-    report[0] = modifiers;
-    report[1] = 0; // reserved
-    report[2..8].copy_from_slice(&keys);
-
-    assert_eq!(report[0], 0x05);
-    assert_eq!(report[1], 0);
-    assert_eq!(&report[2..8], &keys);
-}
-
-#[test]
-fn nkro_bitmap_generation_logic() {
-    let current_keys = [0x04, 0x29, 0x1E, 0, 0, 0]; // 'A' (4), 'Esc' (41), '1' (30)
-    
-    let mut bits = [0u8; 31];
-    // Note: modifiers intentionally NOT in bitmap — they're in the separate modifier byte
-    for &k in &current_keys {
-        if k > 0 && k < 248 {
-            let byte = k as usize / 8;
-            let bit = k as usize % 8;
-            bits[byte] |= 1 << bit;
+#[ignore]
+fn dump_rgb_frames() {
+    use std::io::Write;
+    let path = std::env::var("RGB_DUMP").expect("RGB_DUMP");
+    let mut out = std::fs::File::create(path).unwrap();
+    let speeds = [0u8, 127, 255];
+    let hsvs = [[255u8, 255, 151], [0, 255, 255], [170, 128, 200], [20, 0, 255]];
+    let times = [0u32, 16, 37, 500, 1234, 4000, 30000, 65520, 70001, 1000003];
+    let keys = [(3u8, 1u8), (1, 5), (4, 9), (2, 18), (5, 6)];
+    let mut r = rgb::RgbMatrix::new();
+    r.sethsv_noeeprom(0, 255, 255);
+    for mode in 1..crate::led::rgb_matrix::RGB_MATRIX_EFFECT_MAX {
+        for &sp in &speeds {
+            for (hi, hsv) in hsvs.iter().enumerate() {
+                r.speed = sp;
+                r.sethsv_noeeprom(hsv[0], hsv[1], hsv[2]);
+                r.set_mode(mode);
+                for (ti, &t) in times.iter().enumerate() {
+                    let (row, col) = keys[ti % keys.len()];
+                    r.handle_key_event(row, col, true);
+                    let mut flushed = false;
+                    let mut frame = [[0u8; 3]; 100];
+                    for _ in 0..64 {
+                        r.rgb_matrix_task(t, |m| {
+                            for i in 0..100 {
+                                frame[i] = m.color(i);
+                            }
+                            flushed = true;
+                            true
+                        });
+                        if flushed {
+                            break;
+                        }
+                    }
+                    write!(out, "{mode} {sp} {hi} {t}").unwrap();
+                    for c in frame.iter() {
+                        write!(out, " {:02x}{:02x}{:02x}", c[0], c[1], c[2]).unwrap();
+                    }
+                    writeln!(out).unwrap();
+                }
+            }
         }
     }
-    
-    // Verify keycode 4 ('A') -> byte = 0, bit = 4. bits[0] should have bit 4 set.
-    assert_ne!(bits[0] & (1 << 4), 0);
-    
-    // Verify keycode 30 ('1') -> byte = 3, bit = 6. bits[3] should have bit 6 set.
-    assert_ne!(bits[3] & (1 << 6), 0);
-    
-    // Verify keycode 41 ('Esc') -> byte = 5, bit = 1. bits[5] should have bit 1 set.
-    assert_ne!(bits[5] & (1 << 1), 0);
-    assert_ne!(bits[5] & (1 << 1), 0);
 }
-
-// ===== DEBOUNCE ALGORITHM (QMK sym_eager_pk, DEBOUNCE=5) =====
-
-/// Mirror of C reference `quantum/debounce/sym_eager_pk.c` `transfer_matrix_values`.
-#[test]
-fn matrix_sym_eager_pk_eager_event_on_first_change() {
-    use crate::keyboard::matrix::eager_pk_step;
-
-    // Idle: cooked=0, ctr=0. Press arrives.
-    let (cooked, ctr, ev) = eager_pk_step(true, false, 0);
-    assert!(cooked);
-    assert_eq!(ctr, 5);
-    assert_eq!(ev, Some(true));
-}
-
-#[test]
-fn matrix_sym_eager_pk_lockout_suppresses_bounce() {
-    use crate::keyboard::matrix::eager_pk_step;
-
-    // Mid-lockout (ctr=3). Switch bounces back; no event, cooked unchanged.
-    let (cooked, ctr, ev) = eager_pk_step(false, true, 3);
-    assert!(cooked, "cooked bit must not flip during lockout");
-    assert_eq!(ctr, 3, "lockout counter unchanged");
-    assert!(ev.is_none());
-}
-
-#[test]
-fn matrix_sym_eager_pk_release_after_lockout_expires() {
-    use crate::keyboard::matrix::eager_pk_step;
-
-    // After lockout (ctr=0), release fires immediately.
-    let (cooked, ctr, ev) = eager_pk_step(false, true, 0);
-    assert!(!cooked);
-    assert_eq!(ctr, 5);
-    assert_eq!(ev, Some(false));
-}
-
-#[test]
-fn matrix_sym_eager_pk_one_key_short_mash() {
-    use crate::keyboard::matrix::eager_pk_step;
-    use crate::keyboard::matrix::DEBOUNCE_MS;
-
-    // Mirrors C reference `sym_eager_pk_tests.cpp::OneKeyShort1`:
-    // DOWN at t=0, UP at t=1, UP-event at t=5, DOWN at t=6, DOWN-event at t=10.
-    // Tracks (debounced, counter) through the scan() events and the
-    // 1ms tick decrements that occur between them.
-
-    let mut cooked = false;
-    let mut ctr: u8 = 0;
-
-    // t=0: scan — DOWN arrives. Lockout was 0 → fire.
-    let (c, n, e) = eager_pk_step(true, cooked, ctr);
-    cooked = c; ctr = n;
-    assert_eq!(e, Some(true));
-    assert!(cooked);
-    assert_eq!(ctr, DEBOUNCE_MS);
-
-    // t=0..4: 5 ms of ticks — counter decrements to 0.
-    for _ in 0..5 {
-        ctr = ctr.saturating_sub(1);
-    }
-    assert_eq!(ctr, 0);
-
-    // t=5: scan — UP arrives. ctr=0 → fire UP.
-    let (c, n, e) = eager_pk_step(false, cooked, ctr);
-    cooked = c; ctr = n;
-    assert_eq!(e, Some(false));
-    assert!(!cooked);
-    assert_eq!(ctr, DEBOUNCE_MS);
-
-    // t=5..9: 5 ms of ticks.
-    for _ in 0..5 {
-        ctr = ctr.saturating_sub(1);
-    }
-    assert_eq!(ctr, 0);
-
-    // t=10: scan — DOWN again. ctr=0 → fire DOWN.
-    let (c, n, e) = eager_pk_step(true, cooked, ctr);
-    cooked = c; ctr = n;
-    assert_eq!(e, Some(true));
-    assert!(cooked);
-    assert_eq!(ctr, DEBOUNCE_MS);
-}
-
-#[test]
-fn matrix_sym_eager_pk_lockout_clamps_at_zero() {
-    let mut m = crate::keyboard::matrix::Matrix::new();
-    m.counters[0][0] = 1;
-    m.tick_debounce();
-    assert_eq!(m.counters[0][0], 0);
-    m.tick_debounce();
-    assert_eq!(m.counters[0][0], 0, "counter must clamp, not underflow");
-}
-

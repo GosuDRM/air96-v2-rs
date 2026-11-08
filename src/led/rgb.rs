@@ -13,16 +13,10 @@ pub const LED_COUNT: usize = 110;
 /// Reactive hit-tracker depth — QMK `LED_HITS_TO_REMEMBER` (rgb_matrix_types.h) = 8.
 pub const HIT_BUFFER: usize = 8;
 
-// IS31FL3733 registers (function page)
-const REG_SHUTDOWN: u8 = 0x0A;
-const REG_CONFIG: u8 = 0x00;
 
-// Configuration
-const CONFIG_NORMAL: u8 = 0x01;
 
-use heapless::Vec;
 
-use super::animation;
+
 
 /// Single LED channel mapping (port of is31_led struct from keymap.c)
 #[derive(Debug, Clone, Copy)]
@@ -163,61 +157,24 @@ pub const LED_MAP: [LedMapping; LED_COUNT] = [
     LedMapping { driver: 1, r: 0x09, g: 0x19, b: 0x29 },
 ];
 
+/// IS31FL3733 PWM buffer plus the QMK `rgb_matrix.c` state (see `rgb_matrix.rs`).
 pub struct RgbMatrix {
-    /// PWM buffer: [LED_COUNT][3] = RGB per LED (0-255)
+    /// Driver PWM buffer: [LED_COUNT][3] RGB.
     buffer: [[u8; 3]; LED_COUNT],
-    /// Dirty flags for each driver chip
+    /// Per-driver dirty flags (`pwm_buffer_dirty`).
     pub dirty1: bool,
     pub dirty2: bool,
-    /// Current mode
-    pub mode: u8,
-    /// Animation tick counter (real wall-clock milliseconds, matching C g_rgb_timer)
-    pub anim_tick: u32,
-    /// Current hue (0-255)
-    pub hue: u8,
-    /// Current saturation (0-255)
-    pub sat: u8,
-    /// Current brightness (value, 0-255)
-    pub val: u8,
-    /// Animation speed (0-255, higher = faster)
-    pub speed: u8,
-    /// Enabled flag
+    // rgb_matrix_config
     pub enabled: bool,
-    /// Suspend state
+    pub mode: u8,
+    pub hue: u8,
+    pub sat: u8,
+    pub val: u8,
+    pub speed: u8,
+    pub flags: u8,
+    /// `suspend_state`.
     pub suspended: bool,
-
-    // ── Reactive hit tracking (20-entry ring buffer) ──────────────
-    pub hit_count: u8,
-    pub hit_index: [u8; HIT_BUFFER],
-    pub hit_x: [u8; HIT_BUFFER],
-    pub hit_y: [u8; HIT_BUFFER],
-    pub hit_tick: [u32; HIT_BUFFER],
-
-    // ── Framebuffer for matrix effects (digital_rain, typing_heatmap) ─
-    pub frame_buffer: [[u8; 19]; 6],
-
-    // ── Digital rain state ────────────────────────────────────────
-    pub digital_rain_drop: u8,
-    pub digital_rain_decay: u8,
-
-    // ── Pixel flow state ──────────────────────────────────────────
-    pub pixel_flow_state: [(u8, u8, u8); LED_COUNT],
-    pub pixel_flow_wait_timer: u32,
-
-    // ── Pixel fractal state ───────────────────────────────────────
-    pub pixel_fractal_state: [[bool; 9]; 6], // [MATRIX_ROWS][MID_COL]
-    pub pixel_fractal_timer: u32,
-
-    // ── Pixel rain timer ──────────────────────────────────────────
-    pub pixel_rain_timer: u32,
-
-    // ── Typing heatmap state ──────────────────────────────────────
-    pub heatmap_decrease_timer: u16,
-    pub decrease_heatmap: bool,
-    /// Caps Lock active state
-    pub caps_lock: bool,
-    /// Num Lock active state
-    pub num_lock: bool,
+    pub(crate) qmk: super::rgb_matrix::QmkState,
 }
 
 impl Default for RgbMatrix {
@@ -227,154 +184,91 @@ impl Default for RgbMatrix {
 }
 
 impl RgbMatrix {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             buffer: [[0; 3]; LED_COUNT],
             dirty1: true,
             dirty2: true,
-            mode: 12,  // CYCLE_LEFT_RIGHT (QMK enum value) — C RGB_MATRIX_DEFAULT_MODE
-            anim_tick: 0,
-            hue: 255,  // C first-boot rgb_matrix_sethsv(255, …) (ansi.c:683)
-            sat: 255,  // RGB_MATRIX_DEFAULT_SAT
-            val: 151,  // C first-boot: 255 − RGB_MATRIX_VAL_STEP*2 = 255 − 104
-            speed: 127, // RGB_MATRIX_DEFAULT_SPD = UINT8_MAX/2
             enabled: true,
+            mode: 12,
+            hue: 0,
+            sat: 255,
+            val: 255,
+            speed: 127,
+            flags: super::rgb_matrix::LED_FLAG_ALL,
             suspended: false,
-            hit_count: 0,
-            hit_index: [0; HIT_BUFFER],
-            hit_x: [0; HIT_BUFFER],
-            hit_y: [0; HIT_BUFFER],
-            hit_tick: [0; HIT_BUFFER],
-            frame_buffer: [[0; 19]; 6],
-            digital_rain_drop: 0,
-            digital_rain_decay: 0,
-            pixel_flow_state: [(0, 0, 0); LED_COUNT],
-            pixel_flow_wait_timer: 0,
-            pixel_fractal_state: [[false; 9]; 6],
-            pixel_fractal_timer: 0,
-            pixel_rain_timer: 0,
-            heatmap_decrease_timer: 0,
-            decrease_heatmap: false,
-            caps_lock: false,
-            num_lock: false,
+            qmk: super::rgb_matrix::QmkState::new(),
         }
     }
 
-    /// Set a single LED (port of rgb_matrix_set_color)
+    /// `rgb_matrix_set_color()`.
     pub fn set_color(&mut self, index: usize, r: u8, g: u8, b: u8) {
-        if index < LED_COUNT {
-            let prev = self.buffer[index];
-            if prev != [r, g, b] {
-                self.buffer[index] = [r, g, b];
-                let map = &LED_MAP[index];
-                if map.driver == 0 {
-                    self.dirty1 = true;
-                } else {
-                    self.dirty2 = true;
-                }
+        if index < LED_COUNT && self.buffer[index] != [r, g, b] {
+            self.buffer[index] = [r, g, b];
+            if LED_MAP[index].driver == 0 {
+                self.dirty1 = true;
+            } else {
+                self.dirty2 = true;
             }
         }
     }
 
-    /// Set all LEDs (port of rgb_matrix_set_color_all)
+    /// `rgb_matrix_set_color_all()`.
     pub fn set_all(&mut self, r: u8, g: u8, b: u8) {
-        for led in &mut self.buffer {
-            *led = [r, g, b];
-        }
-        self.dirty1 = true;
-        self.dirty2 = true;
-    }
-
-    /// Convert HSV to RGB and set all (port of rgb_matrix_sethsv)
-    pub fn set_hsv(&mut self, h: u8, s: u8, v: u8) {
-        self.hue = h;
-        self.sat = s;
-        self.val = v;
-        let (r, g, b) = hsv_to_rgb(h, s, v);
-        self.set_all(r, g, b);
-    }
-
-    /// Check if dirty and needs I2C flush
-    pub fn needs_flush(&self) -> bool { self.dirty1 || self.dirty2 }
-
-    /// Register a key hit for reactive animations.
-    /// led_index: the LED index where the key is, or 0xFF if none.
-    /// anim_tick_at_press: the animation tick at which the press occurred.
-    pub fn register_hit(&mut self, led_index: u8, anim_tick_at_press: u32) {
-        if led_index == 0xFF { return; }
-        let led = led_index as usize;
-        if led < LED_COUNT {
-            let idx = self.hit_count as usize % HIT_BUFFER;
-            self.hit_index[idx] = led_index;
-            self.hit_x[idx] = super::animation::LED_POSITIONS[led].0;
-            self.hit_y[idx] = super::animation::LED_POSITIONS[led].1;
-            // Store the absolute anim_tick at press time. Reactive effects
-            // compute elapsed = current_tick.wrapping_sub(stored_tick).
-            self.hit_tick[idx] = anim_tick_at_press;
-            self.hit_count = self.hit_count.wrapping_add(1);
+        for i in 0..LED_COUNT {
+            self.set_color(i, r, g, b);
         }
     }
 
-    /// Advance animation by one tick and render to buffer (call every 10-50ms)
-    pub fn tick_animation(&mut self) {
-        animation::tick_animation(self);
+    pub fn color(&self, index: usize) -> [u8; 3] {
+        self.buffer[index]
     }
 
-    /// Cycle to next animation mode.
-    /// Port of QMK rgb_matrix_step: advance, wrapping MAX-1 → 1 (skips NONE=0).
-    pub fn next_mode(&mut self) {
-        self.mode = if self.mode + 1 >= animation::ANIMATION_COUNT { 1 } else { self.mode + 1 };
-        self.anim_tick = 0;
-        // Reset reactive hit tracking when changing modes
-        self.hit_count = 0;
-        // Reset framebuffer effects
-        self.frame_buffer = [[0; 19]; 6];
-        self.pixel_flow_state = [(0, 0, 0); LED_COUNT];
-        self.pixel_fractal_state = [[false; 9]; 6];
-        self.dirty1 = true;
-        self.dirty2 = true;
+    pub fn needs_flush(&self) -> bool {
+        self.dirty1 || self.dirty2
     }
 
-    /// Build per-driver PWM buffers for batched I2C write.
-    /// Returns (driver1_buffer, driver2_buffer) — each 192 bytes covering all PWM registers.
-    /// Caller must: select PWM page, then write buf at register 0x00.
-    /// Port of rgb_matrix_update_pwm_buffers → IS31FL3733_write_pwm_buffer
-    pub fn build_pwm_buffers(&mut self) -> ([u8; 192], [u8; 192]) {
+    /// Per-driver PWM register images (192 bytes each) for the I2C flush.
+    pub fn build_pwm_buffers(&self) -> ([u8; 192], [u8; 192]) {
         let mut buf1 = [0u8; 192];
         let mut buf2 = [0u8; 192];
-
         for (i, led) in self.buffer.iter().enumerate() {
             let map = &LED_MAP[i];
             let buf = if map.driver == 0 { &mut buf1 } else { &mut buf2 };
-            let color = if (self.caps_lock && i == 55) || (self.num_lock && i == 33) {
-                [0xFF, 0xFF, 0xFF]
-            } else {
-                *led
-            };
-            buf[map.r as usize] = color[0];
-            buf[map.g as usize] = color[1];
-            buf[map.b as usize] = color[2];
+            buf[map.r as usize] = led[0];
+            buf[map.g as usize] = led[1];
+            buf[map.b as usize] = led[2];
         }
         (buf1, buf2)
     }
-
-    /// Initialize IS31FL3733 drivers over I2C (port of IS31FL3733_init)
-    /// Returns list of (addr, reg, value) I2C writes for init sequence.
-    pub fn init_sequence() -> Vec<(u8, u8, u8), 8> {
-        let mut writes: Vec<(u8, u8, u8), 8> = Vec::new();
-        let _ = writes.push((DRIVER_ADDR_1, REG_SHUTDOWN, 0x01));
-        let _ = writes.push((DRIVER_ADDR_1, REG_CONFIG, CONFIG_NORMAL));
-        let _ = writes.push((DRIVER_ADDR_2, REG_SHUTDOWN, 0x01));
-        let _ = writes.push((DRIVER_ADDR_2, REG_CONFIG, CONFIG_NORMAL));
-        writes
-    }
 }
 
-/// HSV → RGB conversion — exact port of QMK `hsv_to_rgb_impl` (quantum/color.c).
-/// Integer math is bit-for-bit: region = h*6/255, the (h*2 − region*85)*3 remainder,
-/// p/q/t scaled by `>>8` (÷256, NOT ÷255), and region 6 folded into case 0.
+/// `CIE1931_CURVE` (quantum/led_tables.c); the C build defines USE_CIE1931_CURVE.
+pub const CIE1931_CURVE: [u8; 256] = [
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2,
+    2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4,
+    4, 4, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 7, 7, 7, 7,
+    7, 8, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 11, 11, 11, 12,
+    12, 12, 13, 13, 13, 14, 14, 14, 15, 15, 15, 16, 16, 17, 17, 17,
+    18, 18, 19, 19, 20, 20, 21, 21, 22, 22, 23, 23, 24, 24, 25, 25,
+    26, 26, 27, 27, 28, 29, 29, 30, 30, 31, 32, 32, 33, 34, 34, 35,
+    36, 36, 37, 38, 38, 39, 40, 41, 41, 42, 43, 44, 45, 45, 46, 47,
+    48, 49, 50, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
+    63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 76, 77, 78, 79,
+    80, 81, 83, 84, 85, 86, 88, 89, 90, 91, 93, 94, 95, 97, 98, 100,
+    101, 102, 104, 105, 107, 108, 109, 111, 112, 114, 115, 117, 119, 120, 122, 123,
+    125, 126, 128, 130, 131, 133, 135, 136, 138, 140, 142, 143, 145, 147, 149, 150,
+    152, 154, 156, 158, 160, 162, 163, 165, 167, 169, 171, 173, 175, 177, 179, 181,
+    183, 186, 188, 190, 192, 194, 196, 198, 201, 203, 205, 207, 209, 212, 214, 216,
+    219, 221, 223, 226, 228, 231, 233, 235, 238, 240, 243, 245, 248, 250, 253, 255,
+];
+
+/// `hsv_to_rgb()` = `hsv_to_rgb_impl(hsv, use_cie = true)` (quantum/color.c).
 pub fn hsv_to_rgb(h: u8, s: u8, v: u8) -> (u8, u8, u8) {
-    if s == 0 { return (v, v, v); }
+    let v = CIE1931_CURVE[v as usize];
+    if s == 0 {
+        return (v, v, v);
+    }
     let h = h as u16;
     let s = s as u16;
     let v = v as u16;
@@ -393,3 +287,4 @@ pub fn hsv_to_rgb(h: u8, s: u8, v: u8) -> (u8, u8, u8) {
         _ => (v, p, q),
     }
 }
+

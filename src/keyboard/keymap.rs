@@ -1,256 +1,310 @@
-//! Keymap engine — port of keymaps/default/keymap.c + ansi.h custom keycodes
+//! Keymap and keycodes — generated from the C firmware by `gen_keymap.py`
+//! (keyboards/air96_v2/ansi/keymaps/default/keymap.c, keyboard.json LAYOUT,
+//! quantum/keycodes.h, tmk_core/protocol/report.h). Do not edit by hand.
 //!
-//! DO NOT MODIFY — 5-layer keymap aligned to physical matrix from keyboard.json.
-//! Matrix positions are PCB-specific (column [0,1] is empty). Changing key
-//! positions or layer indices without the physical matrix reference breaks
-//! all key mappings. Verified working at v3.8.x.
-//!
-//! 5 layers: Mac base(0), Mac Fn(1), Win base(2), Win Fn(3), Function(4)
-//! Physical matrix positions from keyboards/nuphy/air96_v2/keyboard.json LAYOUT:
-//!   Row 0: ESC, [0,1]=empty, F-keys at 2-13, Print at 14
-//!   Row 1: GRV..BSPC at 0-13, [1,14]=empty, HOME(15), PGUP(16), NUM(17)..
-//!   Row 2: TAB..BSLS at 0-13, DEL(14), END(15), PGDN(16), P7(17)..
-//!   Row 3: CAPS..QUOT at 0-11, [3,12]=empty, ENT(13), P4(17)..
-//!   Row 4: LSFT..RSFT at 0-13 with gaps, UP(15), P1(17)..
-//!   Row 5: LCTL..RGHT at 0-16 with gaps, P0(17), PDOT(19)
-
-use crate::wireless::uart::LinkMode;
+//! Keycodes are QMK's numeric values, so VIA reads and writes them as it does
+//! with the C VIA firmware. Positions outside the LAYOUT are KC_NO.
 
 pub const LAYER_COUNT: usize = 5;
+pub const KC_NO: u16 = 0x0000;
+pub const KC_TRNS: u16 = 0x0001;
 
-// ── Custom keycodes (port of ansi.h enum + QMK built-in RGB/media) ─────
-pub const KC_RF_DFU: u16      = 0x5C00;
-pub const KC_LNK_USB: u16     = 0x5C01;
-pub const KC_LNK_RF: u16      = 0x5C02;
-pub const KC_LNK_BLE1: u16    = 0x5C03;
-pub const KC_LNK_BLE2: u16    = 0x5C04;
-pub const KC_LNK_BLE3: u16    = 0x5C05;
-pub const KC_MAC_TASK: u16    = 0x5C06;
-pub const KC_MAC_SEARCH: u16  = 0x5C07;
-pub const KC_MAC_VOICE: u16   = 0x5C08;
-pub const KC_MAC_CONSOLE: u16 = 0x5C09;
-pub const KC_MAC_DND: u16     = 0x5C0A;
-pub const KC_MAC_PRT: u16     = 0x5C0B;
-pub const KC_MAC_PRTA: u16    = 0x5C0C;
-pub const KC_SIDE_VAI: u16    = 0x5C0D;
-pub const KC_SIDE_VAD: u16    = 0x5C0E;
-pub const KC_SIDE_MOD: u16    = 0x5C0F;
-pub const KC_SIDE_HUI: u16    = 0x5C10;
-pub const KC_SIDE_SPI: u16    = 0x5C11;
-pub const KC_SIDE_SPD: u16    = 0x5C12;
-pub const KC_DEV_RESET: u16   = 0x5C13;
-pub const KC_SLEEP_MODE: u16  = 0x5C14;
-pub const KC_BAT_SHOW: u16    = 0x5C15;
-pub const KC_RGB_TEST: u16    = 0x5C16;
-pub const KC_BAT_NUM: u16     = 0x5C17;
-// Consumer keys
-pub const KC_BRID: u16        = 0x5C18;
-pub const KC_BRIU: u16        = 0x5C19;
-pub const KC_MPRV: u16        = 0x5C1A;
-pub const KC_MPLY: u16        = 0x5C1B;
-pub const KC_MNXT: u16        = 0x5C1C;
-pub const KC_MUTE: u16        = 0x5C1D;
-pub const KC_VOLD: u16        = 0x5C1E;
-pub const KC_VOLU: u16        = 0x5C1F;
-// RGB matrix controls
-pub const KC_RGB_SPD: u16     = 0x5C30;
-pub const KC_RGB_SPI: u16     = 0x5C31;
-pub const KC_RGB_VAI: u16     = 0x5C32;
-pub const KC_RGB_VAD: u16     = 0x5C33;
-pub const KC_RGB_MOD: u16     = 0x5C34;
-pub const KC_RGB_HUI: u16     = 0x5C35;
+// ── ansi.h custom keycodes (QK_KB_0 + n) ──
+pub const KC_RF_DFU: u16 = 0x7E00;
+pub const KC_LNK_USB: u16 = 0x7E01;
+pub const KC_LNK_RF: u16 = 0x7E02;
+pub const KC_LNK_BLE1: u16 = 0x7E03;
+pub const KC_LNK_BLE2: u16 = 0x7E04;
+pub const KC_LNK_BLE3: u16 = 0x7E05;
+pub const KC_MAC_TASK: u16 = 0x7E06;
+pub const KC_MAC_SEARCH: u16 = 0x7E07;
+pub const KC_MAC_VOICE: u16 = 0x7E08;
+pub const KC_MAC_CONSOLE: u16 = 0x7E09;
+pub const KC_MAC_DND: u16 = 0x7E0A;
+pub const KC_MAC_PRT: u16 = 0x7E0B;
+pub const KC_MAC_PRTA: u16 = 0x7E0C;
+pub const KC_SIDE_VAI: u16 = 0x7E0D;
+pub const KC_SIDE_VAD: u16 = 0x7E0E;
+pub const KC_SIDE_MOD: u16 = 0x7E0F;
+pub const KC_SIDE_HUI: u16 = 0x7E10;
+pub const KC_SIDE_SPI: u16 = 0x7E11;
+pub const KC_SIDE_SPD: u16 = 0x7E12;
+pub const KC_DEV_RESET: u16 = 0x7E13;
+pub const KC_SLEEP_MODE: u16 = 0x7E14;
+pub const KC_BAT_SHOW: u16 = 0x7E15;
+pub const KC_RGB_TEST: u16 = 0x7E16;
+pub const KC_BAT_NUM: u16 = 0x7E17;
 
-// ── Consumer usage codes mapped to keycodes ────────────────────────────
+// ── QMK keycode ranges (quantum/keycodes.h) ──
+pub const QK_BASIC: u16 = 0x0000;
+pub const QK_MODS: u16 = 0x0100;
+pub const QK_MODS_MAX: u16 = 0x1FFF;
+pub const QK_MOD_TAP: u16 = 0x2000;
+pub const QK_MOD_TAP_MAX: u16 = 0x3FFF;
+pub const QK_LAYER_TAP: u16 = 0x4000;
+pub const QK_LAYER_TAP_MAX: u16 = 0x4FFF;
+pub const QK_LAYER_MOD: u16 = 0x5000;
+pub const QK_LAYER_MOD_MAX: u16 = 0x51FF;
+pub const QK_TO: u16 = 0x5200;
+pub const QK_TO_MAX: u16 = 0x521F;
+pub const QK_MOMENTARY: u16 = 0x5220;
+pub const QK_MOMENTARY_MAX: u16 = 0x523F;
+pub const QK_DEF_LAYER: u16 = 0x5240;
+pub const QK_DEF_LAYER_MAX: u16 = 0x525F;
+pub const QK_TOGGLE_LAYER: u16 = 0x5260;
+pub const QK_TOGGLE_LAYER_MAX: u16 = 0x527F;
+pub const QK_ONE_SHOT_LAYER: u16 = 0x5280;
+pub const QK_ONE_SHOT_LAYER_MAX: u16 = 0x529F;
+pub const QK_ONE_SHOT_MOD: u16 = 0x52A0;
+pub const QK_ONE_SHOT_MOD_MAX: u16 = 0x52BF;
+pub const QK_LAYER_TAP_TOGGLE: u16 = 0x52C0;
+pub const QK_LAYER_TAP_TOGGLE_MAX: u16 = 0x52DF;
+pub const QK_MACRO: u16 = 0x7700;
+pub const QK_MACRO_MAX: u16 = 0x777F;
+pub const QK_KB: u16 = 0x7E00;
+pub const QK_KB_MAX: u16 = 0x7E3F;
+pub const QK_BOOT: u16 = 0x7C00;
+pub const QK_REBOOT: u16 = 0x7C01;
+pub const QK_CLEAR_EEPROM: u16 = 0x7C03;
+pub const QK_GRAVE_ESCAPE: u16 = 0x7C16;
+pub const QK_LOCK: u16 = 0x7C59;
+pub const QK_UNDERGLOW_TOGGLE: u16 = 0x7820;
+pub const QK_UNDERGLOW_MODE_NEXT: u16 = 0x7821;
+pub const QK_UNDERGLOW_MODE_PREVIOUS: u16 = 0x7822;
+pub const QK_UNDERGLOW_HUE_UP: u16 = 0x7823;
+pub const QK_UNDERGLOW_HUE_DOWN: u16 = 0x7824;
+pub const QK_UNDERGLOW_SATURATION_UP: u16 = 0x7825;
+pub const QK_UNDERGLOW_SATURATION_DOWN: u16 = 0x7826;
+pub const QK_UNDERGLOW_VALUE_UP: u16 = 0x7827;
+pub const QK_UNDERGLOW_VALUE_DOWN: u16 = 0x7828;
+pub const QK_UNDERGLOW_SPEED_UP: u16 = 0x7829;
+pub const QK_UNDERGLOW_SPEED_DOWN: u16 = 0x782A;
+pub const QK_RGB_MATRIX_ON: u16 = 0x7840;
+pub const QK_RGB_MATRIX_OFF: u16 = 0x7841;
+pub const QK_RGB_MATRIX_TOGGLE: u16 = 0x7842;
+pub const QK_RGB_MATRIX_MODE_NEXT: u16 = 0x7843;
+pub const QK_RGB_MATRIX_MODE_PREVIOUS: u16 = 0x7844;
+pub const QK_RGB_MATRIX_HUE_UP: u16 = 0x7845;
+pub const QK_RGB_MATRIX_HUE_DOWN: u16 = 0x7846;
+pub const QK_RGB_MATRIX_SATURATION_UP: u16 = 0x7847;
+pub const QK_RGB_MATRIX_SATURATION_DOWN: u16 = 0x7848;
+pub const QK_RGB_MATRIX_VALUE_UP: u16 = 0x7849;
+pub const QK_RGB_MATRIX_VALUE_DOWN: u16 = 0x784A;
+pub const QK_RGB_MATRIX_SPEED_UP: u16 = 0x784B;
+pub const QK_RGB_MATRIX_SPEED_DOWN: u16 = 0x784C;
+pub const KC_A: u16 = 0x0004;
+pub const KC_EXSEL: u16 = 0x00A4;
+pub const KC_SYSTEM_POWER: u16 = 0x00A5;
+pub const KC_SYSTEM_WAKE: u16 = 0x00A7;
+pub const KC_AUDIO_MUTE: u16 = 0x00A8;
+pub const KC_LAUNCHPAD: u16 = 0x00C2;
+pub const KC_MS_UP: u16 = 0x00CD;
+pub const KC_MS_DOWN: u16 = 0x00CE;
+pub const KC_MS_LEFT: u16 = 0x00CF;
+pub const KC_MS_RIGHT: u16 = 0x00D0;
+pub const KC_MS_BTN1: u16 = 0x00D1;
+pub const KC_MS_BTN8: u16 = 0x00D8;
+pub const KC_MS_WH_UP: u16 = 0x00D9;
+pub const KC_MS_WH_DOWN: u16 = 0x00DA;
+pub const KC_MS_WH_LEFT: u16 = 0x00DB;
+pub const KC_MS_WH_RIGHT: u16 = 0x00DC;
+pub const KC_MS_ACCEL0: u16 = 0x00DD;
+pub const KC_MS_ACCEL1: u16 = 0x00DE;
+pub const KC_MS_ACCEL2: u16 = 0x00DF;
+pub const KC_LEFT_CTRL: u16 = 0x00E0;
+pub const KC_RIGHT_GUI: u16 = 0x00E7;
+pub const KC_ESCAPE: u16 = 0x0029;
+pub const KC_GRAVE: u16 = 0x0035;
+pub const KC_NUM_LOCK: u16 = 0x0053;
+pub const KC_CAPS_LOCK: u16 = 0x0039;
+pub const KC_LOCKING_CAPS_LOCK: u16 = 0x0082;
+pub const KC_BACKSLASH: u16 = 0x0031;
+pub const KC_BACKSPACE: u16 = 0x002A;
+pub const KC_9: u16 = 0x0026;
+pub const KC_0: u16 = 0x0027;
+pub const KC_ENTER: u16 = 0x0028;
+pub const KC_SPACE: u16 = 0x002C;
+pub const KC_LEFT_SHIFT: u16 = 0x00E1;
+pub const KC_RIGHT_SHIFT: u16 = 0x00E5;
+pub const KC_LEFT_ALT: u16 = 0x00E2;
+pub const KC_RIGHT_ALT: u16 = 0x00E6;
+pub const KC_LEFT_GUI: u16 = 0x00E3;
+pub const KC_RIGHT_CTRL: u16 = 0x00E4;
+pub const QK_DEBUG_TOGGLE: u16 = 0x7C02;
+pub const QK_ONE_SHOT_ON: u16 = 0x7C5A;
+pub const QK_ONE_SHOT_OFF: u16 = 0x7C5B;
+pub const QK_ONE_SHOT_TOGGLE: u16 = 0x7C5C;
+pub const QK_TRI_LAYER_LOWER: u16 = 0x7C77;
+pub const QK_TRI_LAYER_UPPER: u16 = 0x7C78;
+pub const QK_MAGIC_SWAP_CONTROL_CAPS_LOCK: u16 = 0x7000;
+pub const QK_MAGIC_UNSWAP_CONTROL_CAPS_LOCK: u16 = 0x7001;
+pub const QK_MAGIC_TOGGLE_CONTROL_CAPS_LOCK: u16 = 0x7002;
+pub const QK_MAGIC_CAPS_LOCK_AS_CONTROL_OFF: u16 = 0x7003;
+pub const QK_MAGIC_CAPS_LOCK_AS_CONTROL_ON: u16 = 0x7004;
+pub const QK_MAGIC_SWAP_LALT_LGUI: u16 = 0x7005;
+pub const QK_MAGIC_UNSWAP_LALT_LGUI: u16 = 0x7006;
+pub const QK_MAGIC_SWAP_RALT_RGUI: u16 = 0x7007;
+pub const QK_MAGIC_UNSWAP_RALT_RGUI: u16 = 0x7008;
+pub const QK_MAGIC_GUI_ON: u16 = 0x7009;
+pub const QK_MAGIC_GUI_OFF: u16 = 0x700A;
+pub const QK_MAGIC_TOGGLE_GUI: u16 = 0x700B;
+pub const QK_MAGIC_SWAP_GRAVE_ESC: u16 = 0x700C;
+pub const QK_MAGIC_UNSWAP_GRAVE_ESC: u16 = 0x700D;
+pub const QK_MAGIC_SWAP_BACKSLASH_BACKSPACE: u16 = 0x700E;
+pub const QK_MAGIC_UNSWAP_BACKSLASH_BACKSPACE: u16 = 0x700F;
+pub const QK_MAGIC_TOGGLE_BACKSLASH_BACKSPACE: u16 = 0x7010;
+pub const QK_MAGIC_NKRO_ON: u16 = 0x7011;
+pub const QK_MAGIC_NKRO_OFF: u16 = 0x7012;
+pub const QK_MAGIC_TOGGLE_NKRO: u16 = 0x7013;
+pub const QK_MAGIC_SWAP_ALT_GUI: u16 = 0x7014;
+pub const QK_MAGIC_UNSWAP_ALT_GUI: u16 = 0x7015;
+pub const QK_MAGIC_TOGGLE_ALT_GUI: u16 = 0x7016;
+pub const QK_MAGIC_SWAP_LCTL_LGUI: u16 = 0x7017;
+pub const QK_MAGIC_UNSWAP_LCTL_LGUI: u16 = 0x7018;
+pub const QK_MAGIC_SWAP_RCTL_RGUI: u16 = 0x7019;
+pub const QK_MAGIC_UNSWAP_RCTL_RGUI: u16 = 0x701A;
+pub const QK_MAGIC_SWAP_CTL_GUI: u16 = 0x701B;
+pub const QK_MAGIC_UNSWAP_CTL_GUI: u16 = 0x701C;
+pub const QK_MAGIC_TOGGLE_CTL_GUI: u16 = 0x701D;
+pub const QK_MAGIC_EE_HANDS_LEFT: u16 = 0x701E;
+pub const QK_MAGIC_EE_HANDS_RIGHT: u16 = 0x701F;
+pub const QK_MAGIC_SWAP_ESCAPE_CAPS_LOCK: u16 = 0x7020;
+pub const QK_MAGIC_UNSWAP_ESCAPE_CAPS_LOCK: u16 = 0x7021;
+pub const QK_MAGIC_TOGGLE_ESCAPE_CAPS_LOCK: u16 = 0x7022;
+pub const QK_MAGIC_MAX: u16 = 0x70FF;
+pub const QK_SPACE_CADET_LEFT_CTRL_PARENTHESIS_OPEN: u16 = 0x7C18;
+pub const QK_SPACE_CADET_RIGHT_CTRL_PARENTHESIS_CLOSE: u16 = 0x7C19;
+pub const QK_SPACE_CADET_LEFT_SHIFT_PARENTHESIS_OPEN: u16 = 0x7C1A;
+pub const QK_SPACE_CADET_RIGHT_SHIFT_PARENTHESIS_CLOSE: u16 = 0x7C1B;
+pub const QK_SPACE_CADET_LEFT_ALT_PARENTHESIS_OPEN: u16 = 0x7C1C;
+pub const QK_SPACE_CADET_RIGHT_ALT_PARENTHESIS_CLOSE: u16 = 0x7C1D;
+pub const QK_SPACE_CADET_RIGHT_SHIFT_ENTER: u16 = 0x7C1E;
+
+// ── Keycodes used by name in the firmware ──
+pub const KC_BRID: u16 = 0x00BE;
+pub const KC_BRIU: u16 = 0x00BD;
+pub const KC_MPRV: u16 = 0x00AC;
+pub const KC_MPLY: u16 = 0x00AE;
+pub const KC_MNXT: u16 = 0x00AB;
+pub const KC_MUTE: u16 = 0x00A8;
+pub const KC_VOLD: u16 = 0x00AA;
+pub const KC_VOLU: u16 = 0x00A9;
+pub const KC_RGB_MOD: u16 = 0x7821;
+pub const KC_RGB_HUI: u16 = 0x7823;
+pub const KC_RGB_VAI: u16 = 0x7827;
+pub const KC_RGB_VAD: u16 = 0x7828;
+pub const KC_RGB_SPI: u16 = 0x7829;
+pub const KC_RGB_SPD: u16 = 0x782A;
+
+/// `MO(layer)` → layer, as decoded by `action_for_keycode()`.
+pub fn mo_layer(kc: u16) -> Option<usize> {
+    if (QK_MOMENTARY..=QK_MOMENTARY_MAX).contains(&kc) { Some((kc & 0x1F) as usize) } else { None }
+}
+
+/// `IS_CONSUMER_KEYCODE()`.
+pub fn is_consumer_key(kc: u16) -> bool {
+    (KC_AUDIO_MUTE..=KC_LAUNCHPAD).contains(&kc)
+}
+
+/// `IS_SYSTEM_KEYCODE()`.
+pub fn is_system_key(kc: u16) -> bool {
+    (KC_SYSTEM_POWER..=KC_SYSTEM_WAKE).contains(&kc)
+}
+
+/// `KEYCODE2CONSUMER()`.
 pub fn consumer_usage(kc: u16) -> u16 {
     match kc {
-        KC_BRID => 0x0070,
-        KC_BRIU => 0x006F,
-        KC_MPRV => 0x00B6,
-        KC_MPLY => 0x00CD,
-        KC_MNXT => 0x00B5,
-        KC_MUTE => 0x00E2,
-        KC_VOLD => 0x00EA,
-        KC_VOLU => 0x00E9,
+        0x00A8 => 0x00E2,
+        0x00A9 => 0x00E9,
+        0x00AA => 0x00EA,
+        0x00AB => 0x00B5,
+        0x00AC => 0x00B6,
+        0x00BB => 0x00B3,
+        0x00BC => 0x00B4,
+        0x00AD => 0x00B7,
+        0x00B0 => 0x00CC,
+        0x00AE => 0x00CD,
+        0x00AF => 0x0183,
+        0x00B1 => 0x018A,
+        0x00B2 => 0x0192,
+        0x00B3 => 0x0194,
+        0x00BF => 0x019F,
+        0x00C0 => 0x01CB,
+        0x00B4 => 0x0221,
+        0x00B5 => 0x0223,
+        0x00B6 => 0x0224,
+        0x00B7 => 0x0225,
+        0x00B8 => 0x0226,
+        0x00B9 => 0x0227,
+        0x00BD => 0x006F,
+        0x00BE => 0x0070,
+        0x00BA => 0x022A,
+        0x00C1 => 0x029F,
+        0x00C2 => 0x02A0,
         _ => 0,
     }
 }
 
-pub fn is_consumer_key(kc: u16) -> bool {
-    (KC_BRID..=KC_VOLU).contains(&kc)
-}
-
-pub fn is_custom(kc: u16) -> bool {
-    kc >= 0x5C00
-}
-
-pub fn lnk_to_channel(kc: u16) -> LinkMode {
+/// `KEYCODE2SYSTEM()`.
+pub fn system_usage(kc: u16) -> u16 {
     match kc {
-        KC_LNK_USB  => LinkMode::Usb,
-        KC_LNK_RF   => LinkMode::Rf24,
-        KC_LNK_BLE1 => LinkMode::Bt1,
-        KC_LNK_BLE2 => LinkMode::Bt2,
-        KC_LNK_BLE3 => LinkMode::Bt3,
-        _ => LinkMode::Usb,
+        0x00A5 => 0x0081,
+        0x00A6 => 0x0082,
+        0x00A7 => 0x0083,
+        _ => 0,
     }
 }
 
-// ── HID keycode aliases ────────────────────────────────────────────────
-pub const KC_NO: u16    = 0x0000;
-// Layer toggle
-pub const MO: u16 = 0x5C20;
-pub fn mo_layer(kc: u16) -> Option<usize> {
-    if kc & 0xFFF0 == MO { Some((kc & 0x0F) as usize) } else { None }
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// KEYMAP: 6 rows × 21 cols, aligned to keyboard.json LAYOUT
-//
-// Column index → physical pin:
-//   0=A4 1=A5 2=A6 3=A7 4=B0 5=B1 6=B10 7=B11 8=B12 9=B13 10=B14
-//   11=B15 12=A8 13=A9 14=A10 15=A15 16=B3 17=C10 18=C11 19=C12 20=D2
-//
-// Empty positions are KC_NO (0x0000).
-// ═══════════════════════════════════════════════════════════════════════
-
-/// Helper: empty row
-const NR: u16 = KC_NO;
-
-// ═══════════════════════════════════════════════════════════════════
-// LAYER 0: Mac base
-// ═══════════════════════════════════════════════════════════════════
-pub const LAYER_MAC: [[u16; 21]; 6] = [
-    // Row 0: ESC, __, BRID, BRIU, MAC_TASK, SEARCH, VOICE, DND, MPRV, MPLY, MNXT, MUTE, VOLD, VOLU, MAC_PRTA
-    [0x29, NR, KC_BRID, KC_BRIU, KC_MAC_TASK, KC_MAC_SEARCH, KC_MAC_VOICE, KC_MAC_DND,
-     KC_MPRV, KC_MPLY, KC_MNXT, KC_MUTE, KC_VOLD, KC_VOLU, KC_MAC_PRTA,
-     NR, NR, NR, NR, NR, NR],
-    // Row 1: GRV, 1-0, MINS, EQL, BSPC, __, HOME, PGUP, NUM, PSLS, PAST, PMNS
-    [0x35, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x2D, 0x2E, 0x2A,
-     NR, 0x4A, 0x4B, 0x53, 0x54, 0x55, 0x56],
-    // Row 2: TAB, Q-P, LBRC, RBRC, BSLS, DEL, END, PGDN, P7, P8, P9, PPLS
-    [0x2B, 0x14, 0x1A, 0x08, 0x15, 0x17, 0x1C, 0x18, 0x0C, 0x12, 0x13, 0x2F, 0x30, 0x31,
-     0x4C, 0x4D, 0x4E, 0x5F, 0x60, 0x61, 0x57],
-    // Row 3: CAPS, A-L, SCLN, QUOT, __, ENT, __, __, __, P4, P5, P6
-    [0x39, 0x04, 0x16, 0x07, 0x09, 0x0A, 0x0B, 0x0D, 0x0E, 0x0F, 0x33, 0x34,
-     NR, 0x28,
-     NR, NR, NR, 0x5C, 0x5D, 0x5E, NR],
-    // Row 4: LSFT, __, Z-M, COMM, DOT, SLSH, __, RSFT, __, UP, __, P1, P2, P3, PENT
-    [0xE1, NR, 0x1D, 0x1B, 0x06, 0x19, 0x05, 0x11, 0x10, 0x36, 0x37, 0x38,
-     NR, 0xE5,
-     NR, 0x52, NR, 0x59, 0x5A, 0x5B, 0x58],
-    // Row 5: LCTL, LALT, LGUI, __, __, __, SPC, __, __, RGUI, MO(1), __, __, RCTL, LEFT, DOWN, RGHT, P0, __, PDOT
-    [0xE0, 0xE2, 0xE3, NR, NR, NR, 0x2C, NR, NR, 0xE7, MO | 1, NR, NR, 0xE4,
-     0x50, 0x51, 0x4F, 0x62, NR, 0x63, NR],
+/// keymaps[][MATRIX_ROWS][MATRIX_COLS] from keymap.c.
+pub const KEYMAPS: [[[u16; 21]; 6]; LAYER_COUNT] = [
+    // layer 0
+    [
+        [0x0029, 0x0000, 0x00BE, 0x00BD, 0x7E06, 0x7E07, 0x7E08, 0x7E0A, 0x00AC, 0x00AE, 0x00AB, 0x00A8, 0x00AA, 0x00A9, 0x7E0C, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000],
+        [0x0035, 0x001E, 0x001F, 0x0020, 0x0021, 0x0022, 0x0023, 0x0024, 0x0025, 0x0026, 0x0027, 0x002D, 0x002E, 0x002A, 0x0000, 0x004A, 0x004B, 0x0053, 0x0054, 0x0055, 0x0056],
+        [0x002B, 0x0014, 0x001A, 0x0008, 0x0015, 0x0017, 0x001C, 0x0018, 0x000C, 0x0012, 0x0013, 0x002F, 0x0030, 0x0031, 0x004C, 0x004D, 0x004E, 0x005F, 0x0060, 0x0061, 0x0057],
+        [0x0039, 0x0004, 0x0016, 0x0007, 0x0009, 0x000A, 0x000B, 0x000D, 0x000E, 0x000F, 0x0033, 0x0034, 0x0000, 0x0028, 0x0000, 0x0000, 0x0000, 0x005C, 0x005D, 0x005E, 0x0000],
+        [0x00E1, 0x0000, 0x001D, 0x001B, 0x0006, 0x0019, 0x0005, 0x0011, 0x0010, 0x0036, 0x0037, 0x0038, 0x0000, 0x00E5, 0x0000, 0x0052, 0x0000, 0x0059, 0x005A, 0x005B, 0x0058],
+        [0x00E0, 0x00E2, 0x00E3, 0x0000, 0x0000, 0x0000, 0x002C, 0x0000, 0x0000, 0x00E7, 0x5221, 0x0000, 0x0000, 0x00E4, 0x0050, 0x0051, 0x004F, 0x0062, 0x0000, 0x0063, 0x0000],
+    ],
+    // layer 1
+    [
+        [0x0001, 0x0000, 0x003A, 0x003B, 0x003C, 0x003D, 0x003E, 0x003F, 0x0040, 0x0041, 0x0042, 0x0043, 0x0044, 0x0045, 0x7E0B, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000],
+        [0x0001, 0x7E03, 0x7E04, 0x7E05, 0x7E02, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0000, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001],
+        [0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x7E13, 0x7E14, 0x7E15, 0x0049, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001],
+        [0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0000, 0x0001, 0x0000, 0x0000, 0x0000, 0x0001, 0x0001, 0x0001, 0x0000],
+        [0x5224, 0x0000, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x5224, 0x782A, 0x7829, 0x0001, 0x0000, 0x5224, 0x0000, 0x7827, 0x0000, 0x0001, 0x0001, 0x0001, 0x0001],
+        [0x0001, 0x0001, 0x0001, 0x0000, 0x0000, 0x0000, 0x0001, 0x0000, 0x0000, 0x0001, 0x0001, 0x0000, 0x0000, 0x0001, 0x7821, 0x7828, 0x7823, 0x0001, 0x0000, 0x0001, 0x0000],
+    ],
+    // layer 2
+    [
+        [0x0029, 0x0000, 0x003A, 0x003B, 0x003C, 0x003D, 0x003E, 0x003F, 0x0040, 0x0041, 0x0042, 0x0043, 0x0044, 0x0045, 0x0046, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000],
+        [0x0035, 0x001E, 0x001F, 0x0020, 0x0021, 0x0022, 0x0023, 0x0024, 0x0025, 0x0026, 0x0027, 0x002D, 0x002E, 0x002A, 0x0000, 0x004A, 0x004B, 0x0053, 0x0054, 0x0055, 0x0056],
+        [0x002B, 0x0014, 0x001A, 0x0008, 0x0015, 0x0017, 0x001C, 0x0018, 0x000C, 0x0012, 0x0013, 0x002F, 0x0030, 0x0031, 0x004C, 0x004D, 0x004E, 0x005F, 0x0060, 0x0061, 0x0057],
+        [0x0039, 0x0004, 0x0016, 0x0007, 0x0009, 0x000A, 0x000B, 0x000D, 0x000E, 0x000F, 0x0033, 0x0034, 0x0000, 0x0028, 0x0000, 0x0000, 0x0000, 0x005C, 0x005D, 0x005E, 0x0000],
+        [0x00E1, 0x0000, 0x001D, 0x001B, 0x0006, 0x0019, 0x0005, 0x0011, 0x0010, 0x0036, 0x0037, 0x0038, 0x0000, 0x00E5, 0x0000, 0x0052, 0x0000, 0x0059, 0x005A, 0x005B, 0x0058],
+        [0x00E0, 0x00E3, 0x00E2, 0x0000, 0x0000, 0x0000, 0x002C, 0x0000, 0x0000, 0x00E6, 0x5223, 0x0000, 0x0000, 0x00E4, 0x0050, 0x0051, 0x004F, 0x0062, 0x0000, 0x0063, 0x0000],
+    ],
+    // layer 3
+    [
+        [0x0001, 0x0000, 0x00BE, 0x00BD, 0x0001, 0x0001, 0x0001, 0x0001, 0x00AC, 0x00AE, 0x00AB, 0x00A8, 0x00AA, 0x00A9, 0x7E0C, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000],
+        [0x0001, 0x7E03, 0x7E04, 0x7E05, 0x7E02, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0000, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001],
+        [0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x7E13, 0x7E14, 0x7E15, 0x0049, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001],
+        [0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0000, 0x0001, 0x0000, 0x0000, 0x0000, 0x0001, 0x0001, 0x0001, 0x0000],
+        [0x5224, 0x0000, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x5224, 0x782A, 0x7829, 0x0001, 0x0000, 0x5224, 0x0000, 0x7827, 0x0000, 0x0001, 0x0001, 0x0001, 0x0001],
+        [0x0001, 0x0001, 0x0001, 0x0000, 0x0000, 0x0000, 0x0001, 0x0000, 0x0000, 0x0001, 0x0001, 0x0000, 0x0000, 0x0001, 0x7821, 0x7828, 0x7823, 0x0001, 0x0000, 0x0001, 0x0000],
+    ],
+    // layer 4
+    [
+        [0x0001, 0x0000, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000],
+        [0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0000, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001],
+        [0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001],
+        [0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0000, 0x0001, 0x0000, 0x0000, 0x0000, 0x0001, 0x0001, 0x0001, 0x0000],
+        [0x0001, 0x0000, 0x0001, 0x0001, 0x7E16, 0x0001, 0x0001, 0x0001, 0x0001, 0x7E12, 0x7E11, 0x0001, 0x0000, 0x0001, 0x0000, 0x7E0D, 0x0000, 0x0001, 0x0001, 0x0001, 0x0001],
+        [0x0001, 0x0001, 0x0001, 0x0000, 0x0000, 0x0000, 0x0001, 0x0000, 0x0000, 0x0001, 0x5224, 0x0000, 0x0000, 0x0001, 0x7E0F, 0x7E0E, 0x7E10, 0x0001, 0x0000, 0x0001, 0x0000],
+    ],
 ];
 
-// ═══════════════════════════════════════════════════════════════════
-// LAYER 1: Mac Fn
-// ═══════════════════════════════════════════════════════════════════
-pub const LAYER_MAC_FN: [[u16; 21]; 6] = [
-    // Row 0: __, __, F1-F12, MAC_PRT, __(INS is at [2,14])
-    [NR, NR, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, KC_MAC_PRT,
-     NR, NR, NR, NR, NR, NR],
-    // Row 1: __, LNK_BLE1, LNK_BLE2, LNK_BLE3, LNK_RF, __... (transparent for rest)
-    [NR, KC_LNK_BLE1, KC_LNK_BLE2, KC_LNK_BLE3, KC_LNK_RF, NR, NR, NR, NR, NR, NR, NR, NR, NR,
-     NR, NR, NR, NR, NR, NR, NR],
-    // Row 2: fn+[ =DEV_RESET(11), fn+] =SLEEP_MODE(12), fn+\ =BAT_SHOW(13), fn+Del=INS(14) — 1:1 with C
-    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, KC_DEV_RESET, KC_SLEEP_MODE, KC_BAT_SHOW,
-     0x49, NR, NR, NR, NR, NR, NR],
-    // Row 3: all transparent
-    [NR; 21],
-    // Row 4: MO(4) on LSFT(0)/M(8)/RSFT(13); fn+`,`=RGB_SPD(9), fn+`.`=RGB_SPI(10), fn+UP=RGB_VAI(15) — 1:1 with C
-    [MO | 4, NR, NR, NR, NR, NR, NR, NR, MO | 4, KC_RGB_SPD, KC_RGB_SPI, NR, NR, MO | 4,
-     NR, KC_RGB_VAI, NR, NR, NR, NR, NR],
-    // Row 5: fn+LEFT=RGB_MOD(14), fn+DOWN=RGB_VAD(15), fn+RIGHT=RGB_HUI(16) — 1:1 with C
-    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR,
-     KC_RGB_MOD, KC_RGB_VAD, KC_RGB_HUI, NR, NR, NR, NR],
-];
-
-// ═══════════════════════════════════════════════════════════════════
-// LAYER 2: Win base
-// ═══════════════════════════════════════════════════════════════════
-pub const LAYER_WIN: [[u16; 21]; 6] = [
-    // Row 0: ESC, __, F1-F12, PSCR
-    [0x29, NR, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46,
-     NR, NR, NR, NR, NR, NR],
-    // Row 1: same as Mac base
-    [0x35, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x2D, 0x2E, 0x2A,
-     NR, 0x4A, 0x4B, 0x53, 0x54, 0x55, 0x56],
-    // Row 2: same as Mac base
-    [0x2B, 0x14, 0x1A, 0x08, 0x15, 0x17, 0x1C, 0x18, 0x0C, 0x12, 0x13, 0x2F, 0x30, 0x31,
-     0x4C, 0x4D, 0x4E, 0x5F, 0x60, 0x61, 0x57],
-    // Row 3: same as Mac base
-    [0x39, 0x04, 0x16, 0x07, 0x09, 0x0A, 0x0B, 0x0D, 0x0E, 0x0F, 0x33, 0x34,
-     NR, 0x28,
-     NR, NR, NR, 0x5C, 0x5D, 0x5E, NR],
-    // Row 4: same as Mac base
-    [0xE1, NR, 0x1D, 0x1B, 0x06, 0x19, 0x05, 0x11, 0x10, 0x36, 0x37, 0x38,
-     NR, 0xE5,
-     NR, 0x52, NR, 0x59, 0x5A, 0x5B, 0x58],
-    // Row 5: Win layout — LGUI before LALT, RALT instead of RGUI
-    [0xE0, 0xE3, 0xE2, NR, NR, NR, 0x2C, NR, NR, 0xE6, MO | 3, NR, NR, 0xE4,
-     0x50, 0x51, 0x4F, 0x62, NR, 0x63, NR],
-];
-
-// ═══════════════════════════════════════════════════════════════════
-// LAYER 3: Win Fn
-// ═══════════════════════════════════════════════════════════════════
-pub const LAYER_WIN_FN: [[u16; 21]; 6] = [
-    // Row 0: __, __, BRID, BRIU, __, __, __, __, MPRV, MPLY, MNXT, MUTE, VOLD, VOLU, MAC_PRTA
-    [NR, NR, KC_BRID, KC_BRIU, NR, NR, NR, NR, KC_MPRV, KC_MPLY, KC_MNXT, KC_MUTE, KC_VOLD, KC_VOLU, KC_MAC_PRTA,
-     NR, NR, NR, NR, NR, NR],
-    // Row 1: same as Mac Fn (link keys on 1-4)
-    [NR, KC_LNK_BLE1, KC_LNK_BLE2, KC_LNK_BLE3, KC_LNK_RF, NR, NR, NR, NR, NR, NR, NR, NR, NR,
-     NR, NR, NR, NR, NR, NR, NR],
-    // Row 2: same as Mac Fn — DEV_RESET, SLEEP_MODE, BAT_SHOW, INS (1:1 with C)
-    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, KC_DEV_RESET, KC_SLEEP_MODE, KC_BAT_SHOW,
-     0x49, NR, NR, NR, NR, NR, NR],
-    // Row 3: all transparent
-    [NR; 21],
-    // Row 4: same as Mac Fn — MO(4) on LSFT/M/RSFT, fn+`,`=RGB_SPD(9), fn+`.`=RGB_SPI(10), fn+UP=RGB_VAI(15)
-    [MO | 4, NR, NR, NR, NR, NR, NR, NR, MO | 4, KC_RGB_SPD, KC_RGB_SPI, NR, NR, MO | 4,
-     NR, KC_RGB_VAI, NR, NR, NR, NR, NR],
-    // Row 5: fn+LEFT=RGB_MOD(14), fn+DOWN=RGB_VAD(15), fn+RIGHT=RGB_HUI(16) — 1:1 with C
-    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, NR,
-     KC_RGB_MOD, KC_RGB_VAD, KC_RGB_HUI, NR, NR, NR, NR],
-];
-
-// ═══════════════════════════════════════════════════════════════════
-// LAYER 4: Function (side LED + RGB overrides)
-// ═══════════════════════════════════════════════════════════════════
-pub const LAYER_FN: [[u16; 21]; 6] = [
-    [NR; 21],
-    [NR; 21],
-    [NR; 21],
-    [NR; 21],
-    // Row 4: RGB_TEST at 4; SIDE_SPD at 9, SIDE_SPI at 10; SIDE_VAI at 15
-    [NR, NR, NR, NR, KC_RGB_TEST, NR, NR, NR, NR, KC_SIDE_SPD, KC_SIDE_SPI, NR, NR,
-     NR, NR, KC_SIDE_VAI, NR, NR, NR, NR, NR],
-    // Row 5: MO(4) on right-Fn(10); SIDE_MOD on LEFT(14), SIDE_VAD on DOWN(15), SIDE_HUI on RIGHT(16) — 1:1 with C
-    [NR, NR, NR, NR, NR, NR, NR, NR, NR, NR, MO | 4, NR, NR, NR,
-     KC_SIDE_MOD, KC_SIDE_VAD, KC_SIDE_HUI, NR, NR, NR, NR],
-];
-
-// ── Keymap lookup ──────────────────────────────────────────────────────
+/// `keycode_at_keymap_location_raw()`: KC_TRNS beyond the compiled layers.
 pub fn get_keycode(layer: usize, row: usize, col: usize) -> u16 {
-    if row >= 6 || col >= 21 || layer >= LAYER_COUNT { return KC_NO; }
-    match layer {
-        0 => LAYER_MAC[row][col],
-        1 => LAYER_MAC_FN[row][col],
-        2 => LAYER_WIN[row][col],
-        3 => LAYER_WIN_FN[row][col],
-        4 => LAYER_FN[row][col],
-        _ => KC_NO,
-    }
-}
-
-pub fn resolve_keycode(active_layers: &[usize], row: usize, col: usize) -> u16 {
-    for &layer in active_layers.iter().rev() {
-        // VIA dynamic keymap (EEPROM) takes precedence over the compiled keymap.
-        // `dynamic_keymap_get_keycode` returns 0xFFFF/0 when EEPROM is uninitialized
-        // and falls back to the static keymap in that case, so this is safe on
-        // first boot and after `ID_EEPROM_RESET`.
-        let kc = crate::via::dynamic_keymap_get_keycode(layer, row, col);
-        if kc != KC_NO { return kc; }
-    }
-    KC_NO
+    if row < 6 && col < 21 && layer < LAYER_COUNT { KEYMAPS[layer][row][col] } else { KC_TRNS }
 }

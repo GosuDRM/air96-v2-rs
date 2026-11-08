@@ -1,5 +1,57 @@
 # Changelog
 
+## v4.9.0 (2026-11-08)
+
+1:1 port of the C firmware (nuphy-air96-v2 v3.2.9). Each C module now has a
+Rust counterpart written function by function against it; QMK parts were
+ported from the C VIA build's preprocessed sources, so only code that build
+compiles is included.
+
+### Keyboard logic (ansi.c, rf.c, rf_driver.c, sleep.c, side.c)
+
+- **Wireless status frames were rejected.** The parser checked incoming NRF frames with the outgoing (XOR 0x5A) checksum, so link state, battery and lock LEDs never updated in wireless mode. Now byte-wise parsing with the C rules: short ACKs, length bound, 10 ms partial-frame timeout, ACK matched to the pending command.
+- **Saving a setting erased the VIA keymap** (the whole flash page was rewritten without it). Storage now updates byte ranges and preserves everything else.
+- **Wireless power-on always started on 2.4 GHz.** The radio's saved link is now read before the dial switch is scanned, as in C.
+- Wireless NKRO with fixed report ownership (usages 1..111 bitmap, higher byte slots); report queue and in-order replay during link loss/reset with a 1 s age limit; 100 ms resend while active; non-blocking NRF reset; C frame formats for names, READ_DATA and pairing.
+- Debounce is QMK `asym_eager_defer_pk` with 10 ms (was symmetric 5 ms).
+- NumLock auto-on (C v3.2.9): power-on, PC restart, wireless reconnect; Windows mode only.
+- NKRO in both OS modes; Mac/Win screenshot keys by OS mode; shortcuts no longer drop held modifiers; factory reset restores C defaults (RGB speed 151).
+- Side bars, battery/link/Caps/OS/sleep indicators: port of side.c with tables generated from side.h.
+- Removed Rust-only behaviour: runtime 3 s Esc-to-DFU, white Caps/Num key backlight, instant LED-off on USB suspend (C waits 1 s), dongle rename on every 2.4 GHz connect, RGB off during sleep.
+
+### QMK engine (for keys assigned in VIA)
+
+- Full action engine: tapping (mod-tap, layer-tap, TAPPING_TERM 200), one-shot mods/layers, MO/TG/TO/DF/TT/OSL, layer-mods, mouse keys with acceleration, key lock, space cadet, magic (persisted keymap_config), grave escape, tri-layer, QK_BOOT / QK_REBOOT / QK_CLEAR_EEPROM, VIA macros with SEND_STRING timing.
+- Layer resolution, source-layer cache and press/release pairing as QMK.
+
+### RGB matrix
+
+- `rgb_matrix.c` task loop, runners and the 40 enabled effects, with lib8tion math, CIE1931 curve and newlib `rand()`. `tools/rgb_harness/run.sh` renders 4800 frames with QMK's own C code and the Rust port: all identical.
+- RGB keys act on release and Shift reverses them, as `process_rgb()`.
+
+### VIA
+
+- `via.c` / `dynamic_keymap.c`: 8 layers, 16 macros, layout options, matrix state, device indication, RGB matrix channel, at the C build's EEPROM addresses. Stored data resets when the firmware build date changes (QMK behaviour).
+
+### USB
+
+- Device, configuration and HID report descriptors byte-identical to the C VIA build (4 interfaces: boot keyboard, raw HID, shared mouse/system/consumer/NKRO, console), bcdUSB 2.00, no serial. bcdDevice is this firmware's version (0x0490).
+- QMK HID requests: GET_REPORT, GET/SET_IDLE with idle resends, GET/SET_PROTOCOL, SET_REPORT LED parsing; 4-deep IN queues with 100 ms send timeout.
+- VIA commands run in the main loop, after the keyboard task, like `raw_hid_task()`.
+- USB is serviced from the USB interrupt, as the ChibiOS driver does. Polling it from the main loop answered the host too slowly: Linux failed to bind the shared and console interfaces (`-71`) and sometimes read a blank product string. Flash writes no longer disable interrupts (as QMK's `legacy_flash_ops.c`), so USB keeps answering while settings are saved.
+
+### Firmware
+
+- Keyboard and USB state in statics; flash scratch buffer static. The previous layout needed more stack than the 16 KB RAM allows when saving settings. `tools/stack_frames.py` reports the worst static call chain (2.7 KB).
+
+### Action required after flashing
+
+- Saved settings and VIA keymaps reset once (new layout). Windows re-reads descriptors because bcdDevice changed.
+
+### Not verified on hardware
+
+- Wireless delivery, pairing, sleep/wake, dongle names, USB enumeration on Windows/macOS (Linux: all 4 interfaces bind). The QMK action engine is tested on the host against expected QMK behaviour, not differentially against QMK's C code.
+
 ## v4.8.2 (2026-06-14)
 
 Fixed Windows USB enumeration and a short HID SET_REPORT panic that could leave

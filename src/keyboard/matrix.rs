@@ -83,19 +83,34 @@ unsafe fn set_pin_mode(p: &GpioPin, mode: u32) {
     moder.write_volatile((val & !mask) | (mode << (p.pin * 2)));
 }
 
-/// Set a pin low (to scan that row) — writes ODR at offset 0x14
+/// Set a pin low — BRR (bit reset register) at offset 0x28
 #[inline(always)]
 unsafe fn set_pin_low(p: &GpioPin) {
-    // BRR = bit reset register at offset 0x28
     let brr = (p.port as *mut u32).add(0x28 / 4);
     brr.write_volatile(1u32 << p.pin);
 }
 
-/// Set a pin high — writes BSRR at offset 0x18
+/// `setPinInputHigh()`: input with pull-up (PUPDR at 0x0C, 01 = pull-up).
 #[inline(always)]
-unsafe fn set_pin_high(p: &GpioPin) {
-    let bsrr = (p.port as *mut u32).add(0x18 / 4);
-    bsrr.write_volatile(1u32 << p.pin);
+unsafe fn set_pin_input_high(p: &GpioPin) {
+    set_pin_mode(p, 0b00);
+    let pupdr = (p.port as *mut u32).add(0x0C / 4);
+    let val = pupdr.read_volatile();
+    let mask = 0b11u32 << (p.pin * 2);
+    pupdr.write_volatile((val & !mask) | (0b01u32 << (p.pin * 2)));
+}
+
+/// QMK `select_row()`: drive the row low.
+#[inline(always)]
+unsafe fn select_row(p: &GpioPin) {
+    set_pin_low(p);
+    set_pin_mode(p, 0b01);
+}
+
+/// QMK `unselect_row()`: release the row to input pull-up.
+#[inline(always)]
+unsafe fn unselect_row(p: &GpioPin) {
+    set_pin_input_high(p);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -105,37 +120,138 @@ pub struct KeyEvent {
     pub pressed: bool,
 }
 
-/// Per-key debounce lockout (ms). Matches `DEBOUNCE` in
-/// `keyboards/air96_v2/ansi/keyboard.json` and `DEBOUNCE` in
-/// `quantum/debounce/sym_eager_pk.c`.
-pub(crate) const DEBOUNCE_MS: u8 = 5;
+pub const MATRIX_ROWS: usize = 6;
+pub const MATRIX_COLS: usize = 21;
 
-/// Pure sym_eager_pk debounce step. Given the raw pin state, current
-/// debounced bit, and remaining lockout, returns the new debounced bit,
-/// the new lockout counter, and `Some(pressed)` if a debounced event
-/// fires. Mirrors `transfer_matrix_values()` in
-/// `quantum/debounce/sym_eager_pk.c`.
-pub(crate) fn eager_pk_step(
+/// `DEBOUNCE` from keyboards/air96_v2/ansi/keyboard.json.
+pub const DEBOUNCE: u8 = 10;
+const DEBOUNCE_ELAPSED: u8 = 0;
+
+/// `debounce_counter_t`.
+#[derive(Clone, Copy, Default)]
+struct Counter {
     pressed: bool,
-    debounced_bit: bool,
-    ctr: u8,
-) -> (bool, u8, Option<bool>) {
-    if pressed != debounced_bit && ctr == 0 {
-        (pressed, DEBOUNCE_MS, Some(pressed))
-    } else {
-        (debounced_bit, ctr, None)
+    time: u8,
+}
+
+/// Port of `quantum/debounce/asym_eager_defer_pk.c` (the C build's
+/// `DEBOUNCE_TYPE`): a press reports on the first scan that sees it, then the
+/// key ignores input for `DEBOUNCE` ms; a release reports only after the key
+/// has read released for `DEBOUNCE` ms without change.
+pub struct Debouncer {
+    counters: [[Counter; MATRIX_COLS]; MATRIX_ROWS],
+    last_time: u16,
+    counters_need_update: bool,
+    matrix_need_update: bool,
+    cooked_changed: bool,
+}
+
+impl Default for Debouncer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
+impl Debouncer {
+    pub const fn new() -> Self {
+        Self {
+            counters: [[Counter { pressed: false, time: 0 }; MATRIX_COLS]; MATRIX_ROWS],
+            last_time: 0,
+            counters_need_update: false,
+            matrix_need_update: false,
+            cooked_changed: false,
+        }
+    }
+
+    /// `debounce()`. `now` is `timer_read_fast()` (ms).
+    pub fn debounce(&mut self, raw: &[u32; MATRIX_ROWS], cooked: &mut [u32; MATRIX_ROWS], changed: bool, now: u16) -> bool {
+        let mut updated_last = false;
+        self.cooked_changed = false;
+
+        if self.counters_need_update {
+            let elapsed = now.wrapping_sub(self.last_time).min(u8::MAX as u16) as u8;
+            self.last_time = now;
+            updated_last = true;
+            if elapsed > 0 {
+                self.update_debounce_counters_and_transfer_if_expired(raw, cooked, elapsed);
+            }
+        }
+
+        if changed || self.matrix_need_update {
+            if !updated_last {
+                self.last_time = now;
+            }
+            self.transfer_matrix_values(raw, cooked);
+        }
+
+        self.cooked_changed
+    }
+
+    fn update_debounce_counters_and_transfer_if_expired(&mut self, raw: &[u32; MATRIX_ROWS], cooked: &mut [u32; MATRIX_ROWS], elapsed: u8) {
+        self.counters_need_update = false;
+        self.matrix_need_update = false;
+
+        for row in 0..MATRIX_ROWS {
+            for col in 0..MATRIX_COLS {
+                let mask = 1u32 << col;
+                let c = &mut self.counters[row][col];
+                if c.time != DEBOUNCE_ELAPSED {
+                    if c.time <= elapsed {
+                        c.time = DEBOUNCE_ELAPSED;
+                        if c.pressed {
+                            // key-down: eager
+                            self.matrix_need_update = true;
+                        } else {
+                            // key-up: defer
+                            let next = (cooked[row] & !mask) | (raw[row] & mask);
+                            self.cooked_changed |= next != cooked[row];
+                            cooked[row] = next;
+                        }
+                    } else {
+                        c.time -= elapsed;
+                        self.counters_need_update = true;
+                    }
+                }
+            }
+        }
+    }
+
+    fn transfer_matrix_values(&mut self, raw: &[u32; MATRIX_ROWS], cooked: &mut [u32; MATRIX_ROWS]) {
+        self.matrix_need_update = false;
+
+        for row in 0..MATRIX_ROWS {
+            let delta = raw[row] ^ cooked[row];
+            for col in 0..MATRIX_COLS {
+                let mask = 1u32 << col;
+                let c = &mut self.counters[row][col];
+                if delta & mask != 0 {
+                    if c.time == DEBOUNCE_ELAPSED {
+                        c.pressed = raw[row] & mask != 0;
+                        c.time = DEBOUNCE;
+                        self.counters_need_update = true;
+
+                        if c.pressed {
+                            // key-down: eager
+                            cooked[row] ^= mask;
+                            self.cooked_changed = true;
+                        }
+                    }
+                } else if c.time != DEBOUNCE_ELAPSED && !c.pressed {
+                    // key-up: defer
+                    c.time = DEBOUNCE_ELAPSED;
+                }
+            }
+        }
+    }
+}
+
+/// QMK `matrix_scan()` + `keyboard_task()` change detection: raw matrix,
+/// debounced matrix and the previously reported matrix.
 pub struct Matrix {
-    // Debounced state: 6 rows × 21 cols = 126 bits → 16 bytes
-    pub(crate) debounced: [u8; 16],
-    // Raw (unfiltered) state: 6 rows × 21 cols = 126 bits → 16 bytes
-    pub(crate) raw: [u8; 16],
-    // Per-key lockout counter (remaining ms before next change can be registered)
-    pub(crate) counters: [[u8; 21]; 6],
-    // Pending events generated eagerly in scan() on first state change
-    pub(crate) pending_events: heapless::Vec<KeyEvent, 32>,
+    pub raw: [u32; MATRIX_ROWS],
+    pub matrix: [u32; MATRIX_ROWS],
+    previous: [u32; MATRIX_ROWS],
+    pub debouncer: Debouncer,
 }
 
 impl Default for Matrix {
@@ -145,135 +261,84 @@ impl Default for Matrix {
 }
 
 impl Matrix {
-    pub fn new() -> Self {
-        Self {
-            debounced: [0; 16],
-            raw: [0; 16],
-            counters: [[0; 21]; 6],
-            pending_events: heapless::Vec::new(),
-        }
+    pub const fn new() -> Self {
+        Self { raw: [0; MATRIX_ROWS], matrix: [0; MATRIX_ROWS], previous: [0; MATRIX_ROWS], debouncer: Debouncer::new() }
     }
 
-    /// Initialize all row/col pins via HAL (called once at startup).
-    /// This sets the correct modes before we switch to raw register access.
+    /// Initialize all row/col pins (`matrix_init_pins()`): rows unselected
+    /// (input pull-up), columns input pull-up.
     pub unsafe fn init_pins() {
-        // Set row pins as outputs (push-pull, initially high)
         for row in &ROW_PINS {
-            set_pin_mode(row, 0b01); // output
-            set_pin_high(row);
+            unselect_row(row);
         }
-        // Set col pins as inputs with pull-up
         for col in &COL_PINS {
-            set_pin_mode(col, 0b00); // input
-            // Pull-up is set via PUPDR register (offset 0x0C, 01 = pull-up)
-            let pupdr = (col.port as *mut u32).add(0x0C / 4);
-            let val = pupdr.read_volatile();
-            let mask = 0b11u32 << (col.pin * 2);
-            pupdr.write_volatile((val & !mask) | (0b01u32 << (col.pin * 2)));
+            set_pin_input_high(col);
         }
     }
 
-    /// Full matrix scan — QMK `sym_eager_pk` debouncing with per-pin reads.
-    /// On the first scan that detects a change, the event fires immediately
-    /// (0ms latency) and a 5ms per-key lockout absorbs bounce. Mirrors
-    /// `quantum/debounce/sym_eager_pk.c` with `DEBOUNCE=5` from
-    /// `keyboards/air96_v2/ansi/keyboard.json`.
-    pub fn scan(&mut self) -> heapless::Vec<KeyEvent, 32> {
-        for (row_idx, _row_pin) in ROW_PINS.iter().enumerate() {
-            unsafe {
-                set_pin_low(_row_pin);
-                for _ in 0..500u32 { // ~30µs settling
-                    core::ptr::read_volatile(0xE000_E010 as *const u32);
-                }
-            }
-
-            for (col_idx, col_pin) in COL_PINS.iter().enumerate() {
-                let pressed = unsafe { !read_pin(col_pin) }; // per-pin read
-
-                let bit_pos = row_idx * 21 + col_idx;
-                let byte_idx = bit_pos / 8;
-                let bit_mask = 1u8 << (bit_pos % 8);
-
-                let debounced_bit = (self.debounced[byte_idx] & bit_mask) != 0;
-                let raw_bit = (self.raw[byte_idx] & bit_mask) != 0;
-                let ctr = &mut self.counters[row_idx][col_idx];
-
-                if pressed != raw_bit {
-                    if pressed {
-                        self.raw[byte_idx] |= bit_mask;
-                    } else {
-                        self.raw[byte_idx] &= !bit_mask;
-                    }
-                }
-
-                let (new_bit, new_ctr, fired) =
-                    eager_pk_step(pressed, debounced_bit, *ctr);
-                if new_bit {
-                    self.debounced[byte_idx] |= bit_mask;
-                } else {
-                    self.debounced[byte_idx] &= !bit_mask;
-                }
-                *ctr = new_ctr;
-                if let Some(p) = fired {
-                    let _ = self.pending_events.push(KeyEvent {
-                        row: row_idx as u8,
-                        col: col_idx as u8,
-                        pressed: p,
-                    });
-                }
-            }
-
-            unsafe {
-                set_pin_high(_row_pin);
-                for _ in 0..500u32 { // ~30µs unselect recovery
-                    core::ptr::read_volatile(0xE000_E010 as *const u32);
-                }
-            }
+    /// One `matrix_scan()` pass with the given raw rows, then the
+    /// `keyboard_task()` diff against the previous debounced matrix.
+    /// Events are in row-major, column-ascending order.
+    #[inline(never)]
+    pub fn process(&mut self, curr: [u32; MATRIX_ROWS], now: u16) -> heapless::Vec<KeyEvent, 32> {
+        let changed = curr != self.raw;
+        if changed {
+            self.raw = curr;
         }
+        let raw = self.raw;
+        self.debouncer.debounce(&raw, &mut self.matrix, changed, now);
 
         let mut events = heapless::Vec::new();
-        for ev in &self.pending_events {
-            let _ = events.push(*ev);
+        for row in 0..MATRIX_ROWS {
+            let diff = self.matrix[row] ^ self.previous[row];
+            if diff == 0 {
+                continue;
+            }
+            for col in 0..MATRIX_COLS {
+                let mask = 1u32 << col;
+                if diff & mask != 0 && events.push(KeyEvent { row: row as u8, col: col as u8, pressed: self.matrix[row] & mask != 0 }).is_ok() {
+                    self.previous[row] ^= mask;
+                }
+            }
         }
-        self.pending_events.clear();
         events
     }
 
-    /// Decrement per-key lockout counters by 1ms. No event generation here —
-    /// `scan()` emits events eagerly on first state change. When a counter
-    /// reaches 0, the next scan that detects a new change will register it.
-    pub fn tick_debounce(&mut self) {
-        for row_idx in 0..6 {
-            for col_idx in 0..21 {
-                let ctr = &mut self.counters[row_idx][col_idx];
-                if *ctr > 0 {
-                    *ctr -= 1;
-                }
-            }
-        }
+    /// True if any debounced key is down (`matrix_get_row(row) != 0`).
+    pub fn any_pressed(&self) -> bool {
+        self.matrix.iter().any(|&r| r != 0)
     }
 
-    /// Check if Escape key (row 0, col 0) is held — for DFU entry.
-    /// Call after `init_pins()`. Samples 3 times with 30µs settling to
-    /// ride out power-on transients from USB hot-plug.
-    pub unsafe fn check_escape_held() -> bool {
-        let row = &ROW_PINS[0];
-        let col = &COL_PINS[0];
-        for _ in 0..3u8 {
-            set_pin_low(row);
-            for _ in 0..150u32 {
-                core::ptr::read_volatile(0xE000_E010 as *const u32);
+    /// `matrix_read_cols_on_row()` for every row (COL2ROW).
+    #[inline(never)]
+    pub unsafe fn read_raw() -> [u32; MATRIX_ROWS] {
+        let mut rows = [0u32; MATRIX_ROWS];
+        for (row_idx, row_pin) in ROW_PINS.iter().enumerate() {
+            select_row(row_pin);
+            // matrix_output_select_delay(): waitInputPinDelay()
+            cortex_m::asm::delay(12);
+            let mut bits = 0u32;
+            for (col_idx, col_pin) in COL_PINS.iter().enumerate() {
+                if !read_pin(col_pin) {
+                    bits |= 1 << col_idx;
+                }
             }
-            if read_pin(col) {
-                set_pin_high(row);
-                return false;
-            }
-            set_pin_high(row);
-            for _ in 0..50u32 {
-                core::ptr::read_volatile(0xE000_E010 as *const u32);
-            }
+            rows[row_idx] = bits;
+            unselect_row(row_pin);
+            // matrix_output_unselect_delay(): MATRIX_IO_DELAY (30us)
+            cortex_m::asm::delay(48 * 30);
         }
-        true
+        rows
+    }
+
+    /// Bootmagic (`bootmagic_scan()`): Escape held while plugging in.
+    /// Scan, wait `BOOTMAGIC_DEBOUNCE` (2 × DEBOUNCE), scan again. With the
+    /// eager-press debounce the key counts if either scan saw it down.
+    pub unsafe fn check_escape_held(mut wait_ms: impl FnMut(u32)) -> bool {
+        let first = Self::read_raw()[0] & 1 != 0;
+        wait_ms(2 * DEBOUNCE as u32);
+        let second = Self::read_raw()[0] & 1 != 0;
+        first || second
     }
 
     // ─────────────────────────────────────────────────────────────────

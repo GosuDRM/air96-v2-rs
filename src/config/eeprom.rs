@@ -1,37 +1,33 @@
-//! Emulated EEPROM using the last page of STM32F072 flash memory.
+//! Persistent storage in the last two 2KB flash pages.
 //!
-//! The last 2KB flash page (page 63, address 0x0801F800) is used to store
-//! a small user config block. This survives power cycles but has limited
-//! write endurance (~10k cycles per page).
+//!   page 63 (0x0801_F800): [0..16) user + RGB matrix config,
+//!                          [16..2032) VIA dynamic keymap
+//!   page 62 (0x0801_F000): [0..4) VIA magic + layout options,
+//!                          [4..2036) VIA macro buffer
 //!
-//! Config layout (16 bytes at offset 0):
-//!   [0] = magic flag (0xA8 = valid v4: RGB defaults, max speed; 0xA5 = v1)
-//!   [1] = side_mode
-//!   [2] = side_brightness
-//!   [3] = side_speed
-//!   [4] = side_colour
-//!   [5] = side_rgb (bool)
-//!   [6] = sleep_enable (bool)
-//!   [7] = rgb_mode (u8)
-//!   [8] = rgb_hue (u8)
-//!   [9] = rgb_sat (u8)
-//!   [10] = rgb_val (u8)
-//!   [11] = rgb_speed (u8)
-//!   [12] = rgb_enabled (bool)
-//!   [13..15] = reserved / padding
+//! VIA code addresses this storage with the C VIA build's EEPROM addresses
+//! (`ee_read` / `ee_update`): VIA magic at 44, layout options at 47, dynamic
+//! keymap at 48..2064, macros at 2064..4096 — see `via.rs`.
+//!
+//! User config record (page 63, bytes 0..16):
+//!   [0] magic (0xA9 = current, 0xA5 = v1), [1] side_mode, [2] side_brightness,
+//!   [3] side_speed, [4] side_colour, [5] side_rgb, [6] sleep_enable,
+//!   [7] rgb_mode, [8] rgb_hue, [9] rgb_sat, [10] rgb_val, [11] rgb_speed,
+//!   [12] rgb_enabled, [13..15) keymap_config (QMK magic), [15] reserved
 
+#[cfg(all(target_arch = "arm", not(test)))]
 use stm32f0xx_hal::pac;
 
-/// Config page address: last 2KB page (page 63 of 64, 128K flash)
-const CONFIG_PAGE_ADDR: u32 = 0x0801_F800;
-const CONFIG_PAGE_SIZE: usize = 2048;
+const PAGE_SIZE: usize = 2048;
+const PAGE_CONFIG: usize = 1; // page 63
+const PAGE_VIA: usize = 0; // page 62
+#[cfg(all(target_arch = "arm", not(test)))]
+const PAGE_BASE: [u32; 2] = [0x0801_F000, 0x0801_F800];
+
 const MAGIC_VALID_V1: u8 = 0xA5;
-// Bumped 0xA8 → 0xA9 in v4.7.7: the RGB mode renumber (now QMK/VIA IDs) and the
-// corrected speed/brightness defaults make old saved configs invalid, so force a
-// one-time clean re-init to the C-matching defaults.
 const MAGIC_VALID_V5: u8 = 0xA9;
 
-/// User config stored in flash
+/// User config stored in flash.
 #[derive(Debug, Clone, Copy)]
 pub struct UserConfig {
     pub side_mode: u8,
@@ -58,264 +54,210 @@ impl Default for UserConfig {
             side_colour: 0,
             side_rgb: true,
             sleep_enable: true,
-            rgb_mode: 12,    // CYCLE_LEFT_RIGHT (QMK enum) — C RGB_MATRIX_DEFAULT_MODE
-            rgb_hue: 255,   // C first-boot rgb_matrix_sethsv(255, …) (ansi.c:683)
-            rgb_sat: 255,   // RGB_MATRIX_DEFAULT_SAT
-            rgb_val: 151,   // C first-boot: 255 − RGB_MATRIX_VAL_STEP*2 = 255 − 104
-            rgb_speed: 127, // RGB_MATRIX_DEFAULT_SPD = UINT8_MAX/2
+            rgb_mode: 12,   // CYCLE_LEFT_RIGHT — C RGB_MATRIX_DEFAULT_MODE
+            rgb_hue: 255,   // C first-boot rgb_matrix_sethsv(255, …)
+            rgb_sat: 255,
+            rgb_val: 151,   // 255 − RGB_MATRIX_VAL_STEP*2
+            rgb_speed: 127, // RGB_MATRIX_DEFAULT_SPD
             rgb_enabled: true,
         }
     }
 }
 
-/// Load user config from emulated EEPROM.
-/// Returns None if flash page is uninitialized.
+// ── Flash backend ────────────────────────────────────────────────────────
+//
+// A page update reads the page into one 2KB scratch buffer, patches it and
+// reprograms the page. On the MCU the buffer is a static: a 2KB stack array
+// does not fit next to the main loop in 16KB of RAM.
+
+#[cfg(all(target_arch = "arm", not(test)))]
+fn page_read(page: usize, off: usize) -> u8 {
+    unsafe { core::ptr::read_volatile((PAGE_BASE[page] + off as u32) as *const u8) }
+}
+
+/// Erase the page and program it from `buf` (halfword writes, erased
+/// halfwords skipped). Interrupts stay enabled, as in QMK's
+/// legacy_flash_ops.c: the USB interrupt runs between halfword writes (it only
+/// stalls while the flash is busy). No interrupt handler touches the flash.
+#[cfg(all(target_arch = "arm", not(test)))]
+fn page_program(page: usize, buf: &[u8; PAGE_SIZE]) {
+    unsafe {
+        let flash = &*pac::FLASH::ptr();
+        flash.keyr.write(|w| w.bits(0x4567_0123));
+        flash.keyr.write(|w| w.bits(0xCDEF_89AB));
+        while flash.sr.read().bsy().bit() {}
+
+        flash.cr.modify(|_, w| w.per().set_bit());
+        flash.ar.write(|w| w.bits(PAGE_BASE[page]));
+        flash.cr.modify(|_, w| w.strt().set_bit());
+        while flash.sr.read().bsy().bit() {}
+        flash.cr.modify(|_, w| w.per().clear_bit());
+
+        flash.cr.modify(|_, w| w.pg().set_bit());
+        let ptr = PAGE_BASE[page] as *mut u16;
+        for i in 0..PAGE_SIZE / 2 {
+            let hw = (buf[i * 2] as u16) | ((buf[i * 2 + 1] as u16) << 8);
+            if hw != 0xFFFF {
+                core::ptr::write_volatile(ptr.add(i), hw);
+                while flash.sr.read().bsy().bit() {}
+            }
+        }
+        flash.cr.modify(|_, w| w.pg().clear_bit());
+        flash.cr.modify(|_, w| w.lock().set_bit());
+    }
+}
+
+#[cfg(all(target_arch = "arm", not(test)))]
+fn with_scratch<R>(f: impl FnOnce(&mut [u8; PAGE_SIZE]) -> R) -> R {
+    static mut SCRATCH: [u8; PAGE_SIZE] = [0; PAGE_SIZE];
+    // Single-threaded main loop; never re-entered (no flash access from ISRs).
+    f(unsafe { &mut *core::ptr::addr_of_mut!(SCRATCH) })
+}
+
+// Host builds: per-thread pages, so each test starts from erased flash.
+#[cfg(not(all(target_arch = "arm", not(test))))]
+std::thread_local! {
+    static HOST_PAGES: core::cell::RefCell<[[u8; PAGE_SIZE]; 2]> = const { core::cell::RefCell::new([[0xFF; PAGE_SIZE]; 2]) };
+}
+
+#[cfg(not(all(target_arch = "arm", not(test))))]
+fn page_read(page: usize, off: usize) -> u8 {
+    HOST_PAGES.with(|p| p.borrow()[page][off])
+}
+
+#[cfg(not(all(target_arch = "arm", not(test))))]
+fn page_program(page: usize, buf: &[u8; PAGE_SIZE]) {
+    HOST_PAGES.with(|p| p.borrow_mut()[page] = *buf);
+}
+
+#[cfg(not(all(target_arch = "arm", not(test))))]
+fn with_scratch<R>(f: impl FnOnce(&mut [u8; PAGE_SIZE]) -> R) -> R {
+    let mut buf = [0u8; PAGE_SIZE];
+    f(&mut buf)
+}
+
+/// Read-modify-write `len` bytes at `off` from `src(i)`; skips the flash
+/// write when nothing changes.
+fn page_update_with(page: usize, off: usize, len: usize, src: impl Fn(usize) -> u8) {
+    with_scratch(|buf| {
+        let mut changed = false;
+        for (i, b) in buf.iter_mut().enumerate() {
+            let old = page_read(page, i);
+            *b = if i >= off && i < off + len { src(i - off) } else { old };
+            changed |= *b != old;
+        }
+        if changed {
+            page_program(page, buf);
+        }
+    });
+}
+
+fn page_update(page: usize, off: usize, data: &[u8]) {
+    page_update_with(page, off, data.len(), |i| data[i]);
+}
+
+// ── User config ──────────────────────────────────────────────────────────
+
+/// Load the user config; None if never written.
 pub fn load() -> Option<UserConfig> {
-    let addr = CONFIG_PAGE_ADDR as *const u8;
-    unsafe {
-        let magic = core::ptr::read_volatile(addr);
-        if magic == MAGIC_VALID_V5 {
-            let ptr = addr.add(1);
-            Some(UserConfig {
-                side_mode:       core::ptr::read_volatile(ptr),
-                side_brightness: core::ptr::read_volatile(ptr.add(1)),
-                side_speed:      core::ptr::read_volatile(ptr.add(2)),
-                side_colour:     core::ptr::read_volatile(ptr.add(3)),
-                side_rgb:        core::ptr::read_volatile(ptr.add(4)) != 0,
-                sleep_enable:    core::ptr::read_volatile(ptr.add(5)) != 0,
-                rgb_mode:        core::ptr::read_volatile(ptr.add(6)),
-                rgb_hue:         core::ptr::read_volatile(ptr.add(7)),
-                rgb_sat:         core::ptr::read_volatile(ptr.add(8)),
-                rgb_val:         core::ptr::read_volatile(ptr.add(9)),
-                rgb_speed:       core::ptr::read_volatile(ptr.add(10)),
-                rgb_enabled:     core::ptr::read_volatile(ptr.add(11)) != 0,
-            })
-        } else if magic == MAGIC_VALID_V1 {
-            let ptr = addr.add(1);
-            Some(UserConfig {
-                side_mode:       core::ptr::read_volatile(ptr),
-                side_brightness: core::ptr::read_volatile(ptr.add(1)),
-                side_speed:      core::ptr::read_volatile(ptr.add(2)),
-                side_colour:     core::ptr::read_volatile(ptr.add(3)),
-                side_rgb:        core::ptr::read_volatile(ptr.add(4)) != 0,
-                sleep_enable:    core::ptr::read_volatile(ptr.add(5)) != 0,
-                ..Default::default()
-            })
-        } else {
-            None
-        }
+    let r = |i: usize| page_read(PAGE_CONFIG, i);
+    match r(0) {
+        MAGIC_VALID_V5 => Some(UserConfig {
+            side_mode: r(1),
+            side_brightness: r(2),
+            side_speed: r(3),
+            side_colour: r(4),
+            side_rgb: r(5) != 0,
+            sleep_enable: r(6) != 0,
+            rgb_mode: r(7),
+            rgb_hue: r(8),
+            rgb_sat: r(9),
+            rgb_val: r(10),
+            rgb_speed: r(11),
+            rgb_enabled: r(12) != 0,
+        }),
+        MAGIC_VALID_V1 => Some(UserConfig {
+            side_mode: r(1),
+            side_brightness: r(2),
+            side_speed: r(3),
+            side_colour: r(4),
+            side_rgb: r(5) != 0,
+            sleep_enable: r(6) != 0,
+            ..Default::default()
+        }),
+        _ => None,
     }
 }
 
-/// Save user config to emulated EEPROM.
-/// Erases the config page first, then writes 16 bytes.
-/// WARNING: Must not be interrupted — disables interrupts during write.
+/// Save the user config, keeping the dynamic keymap that shares the page.
 pub fn save(cfg: &UserConfig) {
-    cortex_m::interrupt::free(|_| {
-        unsafe {
-            let flash = &*pac::FLASH::ptr();
-
-            // 1. Unlock flash
-            flash.keyr.write(|w| w.bits(0x4567_0123));
-            flash.keyr.write(|w| w.bits(0xCDEF_89AB));
-
-            // 2. Wait until not busy
-            while flash.sr.read().bsy().bit() {}
-
-            // 3. Page erase
-            flash.cr.modify(|_, w| w.per().set_bit());
-            flash.ar.write(|w| w.bits(CONFIG_PAGE_ADDR));
-            flash.cr.modify(|_, w| w.strt().set_bit());
-            while flash.sr.read().bsy().bit() {}
-            flash.cr.modify(|_, w| w.per().clear_bit());
-
-            // 4. Program 8 halfwords (16 bytes)
-            flash.cr.modify(|_, w| w.pg().set_bit());
-
-            let ptr = CONFIG_PAGE_ADDR as *mut u16;
-            
-            // Halfword 0: magic (low) | side_mode (high)
-            let hw0 = MAGIC_VALID_V5 as u16 | ((cfg.side_mode as u16) << 8);
-            core::ptr::write_volatile(ptr, hw0);
-            while flash.sr.read().bsy().bit() {}
-
-            // Halfword 1: side_brightness | side_speed
-            let hw1 = (cfg.side_brightness as u16) | ((cfg.side_speed as u16) << 8);
-            core::ptr::write_volatile(ptr.add(1), hw1);
-            while flash.sr.read().bsy().bit() {}
-
-            // Halfword 2: side_colour | side_rgb
-            let hw2 = (cfg.side_colour as u16) | ((cfg.side_rgb as u16) << 8);
-            core::ptr::write_volatile(ptr.add(2), hw2);
-            while flash.sr.read().bsy().bit() {}
-
-            // Halfword 3: sleep_enable | rgb_mode
-            let hw3 = (cfg.sleep_enable as u16) | ((cfg.rgb_mode as u16) << 8);
-            core::ptr::write_volatile(ptr.add(3), hw3);
-            while flash.sr.read().bsy().bit() {}
-
-            // Halfword 4: rgb_hue | rgb_sat
-            let hw4 = (cfg.rgb_hue as u16) | ((cfg.rgb_sat as u16) << 8);
-            core::ptr::write_volatile(ptr.add(4), hw4);
-            while flash.sr.read().bsy().bit() {}
-
-            // Halfword 5: rgb_val | rgb_speed
-            let hw5 = (cfg.rgb_val as u16) | ((cfg.rgb_speed as u16) << 8);
-            core::ptr::write_volatile(ptr.add(5), hw5);
-            while flash.sr.read().bsy().bit() {}
-
-            // Halfword 6: rgb_enabled | reserved (0)
-            let hw6 = cfg.rgb_enabled as u16;
-            core::ptr::write_volatile(ptr.add(6), hw6);
-            while flash.sr.read().bsy().bit() {}
-
-            // Halfword 7: reserved (0) | reserved (0)
-            core::ptr::write_volatile(ptr.add(7), 0);
-            while flash.sr.read().bsy().bit() {}
-
-            flash.cr.modify(|_, w| w.pg().clear_bit());
-
-            // 5. Lock flash
-            flash.cr.modify(|_, w| w.lock().set_bit());
-        }
-    });
+    let rec = [
+        MAGIC_VALID_V5, cfg.side_mode, cfg.side_brightness, cfg.side_speed,
+        cfg.side_colour, cfg.side_rgb as u8, cfg.sleep_enable as u8, cfg.rgb_mode,
+        cfg.rgb_hue, cfg.rgb_sat, cfg.rgb_val, cfg.rgb_speed,
+        cfg.rgb_enabled as u8,
+    ];
+    page_update(PAGE_CONFIG, 0, &rec);
 }
 
-/// Read a byte from the config page at the given offset.
-#[cfg(all(target_arch = "arm", not(test)))]
-pub fn read_byte(offset: usize) -> u8 {
-    if offset >= CONFIG_PAGE_SIZE { return 0xFF; }
-    unsafe {
-        core::ptr::read_volatile((CONFIG_PAGE_ADDR + offset as u32) as *const u8)
+/// `eeconfig_read_keymap()`: keymap_config.raw at record bytes 13..15
+/// (`eeconfig_init_quantum()` default 0x1400 when erased).
+pub fn keymap_config_load() -> u16 {
+    let raw = page_read(PAGE_CONFIG, 13) as u16 | (page_read(PAGE_CONFIG, 14) as u16) << 8;
+    if raw == 0xFFFF {
+        crate::action::KEYMAP_CONFIG_DEFAULT
+    } else {
+        raw
     }
 }
 
-/// Host/test stub: returns 0xFF (uninitialized) since flash is not mapped on x86.
-/// Callers like `via::dynamic_keymap_get_keycode` treat 0xFFFF as "use static keymap".
-#[cfg(not(all(target_arch = "arm", not(test))))]
-pub fn read_byte(_offset: usize) -> u8 {
-    0xFF
+/// `eeconfig_update_keymap()`.
+pub fn keymap_config_save(raw: u16) {
+    page_update(PAGE_CONFIG, 13, &raw.to_le_bytes());
 }
 
-/// Write a byte to the config page at the given offset.
-/// Performs a read/modify/erase/write cycle on the entire page.
-/// WARNING: Must not be interrupted — disables interrupts during write.
-#[cfg(all(target_arch = "arm", not(test)))]
-pub fn write_byte(offset: usize, value: u8) {
-    if offset >= CONFIG_PAGE_SIZE { return; }
-
-    cortex_m::interrupt::free(|_| {
-        unsafe {
-            // 1. Read entire page into RAM
-            let mut buf = [0u8; CONFIG_PAGE_SIZE];
-            for i in 0..CONFIG_PAGE_SIZE {
-                buf[i] = core::ptr::read_volatile(
-                    (CONFIG_PAGE_ADDR + i as u32) as *const u8
-                );
-            }
-
-            // 2. Modify the target byte
-            buf[offset] = value;
-
-            let flash = &*pac::FLASH::ptr();
-
-            // 3. Unlock flash
-            flash.keyr.write(|w| w.bits(0x4567_0123));
-            flash.keyr.write(|w| w.bits(0xCDEF_89AB));
-
-            // 4. Wait until not busy
-            while flash.sr.read().bsy().bit() {}
-
-            // 5. Page erase
-            flash.cr.modify(|_, w| w.per().set_bit());
-            flash.ar.write(|w| w.bits(CONFIG_PAGE_ADDR));
-            flash.cr.modify(|_, w| w.strt().set_bit());
-            while flash.sr.read().bsy().bit() {}
-            flash.cr.modify(|_, w| w.per().clear_bit());
-
-            // 6. Program page (halfword writes)
-            flash.cr.modify(|_, w| w.pg().set_bit());
-            let ptr = CONFIG_PAGE_ADDR as *mut u16;
-            for i in 0..CONFIG_PAGE_SIZE / 2 {
-                let hw = (buf[i * 2] as u16) | ((buf[i * 2 + 1] as u16) << 8);
-                core::ptr::write_volatile(ptr.add(i), hw);
-                while flash.sr.read().bsy().bit() {}
-            }
-            flash.cr.modify(|_, w| w.pg().clear_bit());
-
-            // 7. Lock flash
-            flash.cr.modify(|_, w| w.lock().set_bit());
-        }
-    });
+/// `eeconfig_init()` / `eeconfig_disable()`: forget every stored setting,
+/// VIA data included.
+pub fn erase() {
+    for page in [PAGE_CONFIG, PAGE_VIA] {
+        page_update_with(page, 0, PAGE_SIZE, |_| 0xFF);
+    }
 }
 
-/// Host/test stub: no-op (flash is not mapped on x86).
-#[cfg(not(all(target_arch = "arm", not(test))))]
-pub fn write_byte(_offset: usize, _value: u8) {
-    // No-op on host; via.rs will succeed in dispatch but the writes are dropped.
-    // The keymap falls back to the static keymap (via 0xFFFF read) so behavior
-    // is identical to a never-written EEPROM, which is the expected host state.
+// ── QMK EEPROM address space used by VIA ─────────────────────────────────
+
+/// QMK EEPROM regions (start, end, page, offset in page).
+const REGIONS: [(u16, u16, usize, usize); 3] = [
+    (44, 48, PAGE_VIA, 0),       // VIA magic (3) + layout options (1)
+    (48, 2064, PAGE_CONFIG, 16), // dynamic keymap
+    (2064, 4096, PAGE_VIA, 4),   // macro buffer
+];
+
+/// `eeprom_read_byte()` at a QMK EEPROM address (VIA region only).
+pub fn ee_read(addr: u16) -> u8 {
+    REGIONS
+        .iter()
+        .find(|r| addr >= r.0 && addr < r.1)
+        .map_or(0xFF, |r| page_read(r.2, r.3 + (addr - r.0) as usize))
 }
 
-/// Size of the dynamic keymap area in the config page.
-pub const DYNAMIC_KEYMAP_SIZE: usize = 2016;
-
-/// Bulk write of the dynamic keymap area (bytes [16..16+2016] of the config page).
-/// Preserves the first 16 bytes (UserConfig). On flash this is one page erase
-/// + 2 KB write — ~50ms total, vs. ~1s+ if done byte-by-byte with `write_byte`.
-/// Used by VIA's `ID_CUSTOM_SAVE` and `ID_DYNAMIC_KEYMAP_RESET`.
-#[cfg(all(target_arch = "arm", not(test)))]
-pub fn save_keymap(keymap: &[u8; DYNAMIC_KEYMAP_SIZE]) {
-    use stm32f0xx_hal::pac;
-    cortex_m::interrupt::free(|_| {
-        unsafe {
-            // Read the current page so we can preserve the UserConfig (first 16 B).
-            let mut buf = [0xFFu8; 2048];
-            for i in 0..2048 {
-                buf[i] = core::ptr::read_volatile(
-                    (CONFIG_PAGE_ADDR + i as u32) as *const u8
-                );
-            }
-            // Overwrite the dynamic keymap area.
-            buf[16..16 + DYNAMIC_KEYMAP_SIZE].copy_from_slice(keymap);
-
-            let flash = &*pac::FLASH::ptr();
-
-            // Unlock flash
-            flash.keyr.write(|w| w.bits(0x4567_0123));
-            flash.keyr.write(|w| w.bits(0xCDEF_89AB));
-            while flash.sr.read().bsy().bit() {}
-
-            // Page erase
-            flash.cr.modify(|_, w| w.per().set_bit());
-            flash.ar.write(|w| w.bits(CONFIG_PAGE_ADDR));
-            flash.cr.modify(|_, w| w.strt().set_bit());
-            while flash.sr.read().bsy().bit() {}
-            flash.cr.modify(|_, w| w.per().clear_bit());
-
-            // Program page (halfword writes)
-            flash.cr.modify(|_, w| w.pg().set_bit());
-            let ptr = CONFIG_PAGE_ADDR as *mut u16;
-            for i in 0..2048 / 2 {
-                let hw = (buf[i * 2] as u16) | ((buf[i * 2 + 1] as u16) << 8);
-                core::ptr::write_volatile(ptr.add(i), hw);
-                while flash.sr.read().bsy().bit() {}
-            }
-            flash.cr.modify(|_, w| w.pg().clear_bit());
-            flash.cr.modify(|_, w| w.lock().set_bit());
-        }
-    });
+/// `eeprom_update_byte()` for a run of bytes; one page rewrite per region touched.
+pub fn ee_update(addr: u16, data: &[u8]) {
+    ee_fill(addr, data.len() as u16, |i| data[i as usize]);
 }
 
-/// Host/test stub for `save_keymap` — no-op.
-#[cfg(not(all(target_arch = "arm", not(test))))]
-pub fn save_keymap(_keymap: &[u8; DYNAMIC_KEYMAP_SIZE]) {
-    // No-op on host; the in-RAM keymap in via.rs remains the source of truth.
-}
-
-/// Reset the dynamic keymap and user config to defaults.
-/// Writes the default keymap to EEPROM and resets the config.
-pub fn reset_to_defaults() {
-    // Write default config first
-    save(&UserConfig::default());
+/// Like `ee_update()` with bytes from `src(i)`, i = 0..len (no source buffer).
+pub fn ee_fill(addr: u16, len: u16, src: impl Fn(u16) -> u8) {
+    let mut i = 0u16;
+    while i < len {
+        let a = addr + i;
+        let Some(r) = REGIONS.iter().find(|r| a >= r.0 && a < r.1) else {
+            i += 1;
+            continue;
+        };
+        let n = (r.1 - a).min(len - i);
+        let base = i;
+        page_update_with(r.2, r.3 + (a - r.0) as usize, n as usize, |k| src(base + k as u16));
+        i += n;
+    }
 }
