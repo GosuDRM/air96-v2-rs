@@ -4,17 +4,15 @@ version = "4.9.0"
 edition = "2021"
 authors = ["GosuDRM"]
 description = "Air96 V2 wireless keyboard firmware — Rust (stm32f0xx-hal)"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/GosuDRM/air96-v2-rs"
 
 [dependencies]
-
-embedded-hal = "1.0"
-embedded-io = "0.6"
 heapless = "0.8"
 
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7"
 stm32f0xx-hal = { version = "0.18.0", features = ["stm32f072", "rt", "stm32-usbd"] }
-nb = "1.1.0"
 
 # USB HID (wired mode)
 usb-device = "0.2"
