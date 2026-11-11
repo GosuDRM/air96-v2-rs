@@ -1000,3 +1000,70 @@ fn dump_rgb_frames() {
         }
     }
 }
+
+/// The radio remembers the last link, so after wired use it reports USB while
+/// the dial now selects wireless. Power-on must still end up on the RF
+/// driver, or every key goes to the USB endpoint and nothing types.
+#[test]
+fn wireless_power_on_after_wired_use_types_over_radio() {
+    let mut m = Mock::new();
+    m.dev_pin = false;
+    m.nrf_saved = [LINK_USB, LINK_BT_1, LINK_BT_1];
+    let mut kb = boot(&mut m);
+    run(&mut kb, &mut m, 400);
+    assert_eq!(kb.dev_info.link_mode, LINK_BT_1);
+    assert_eq!(kb.driver, HostDriver::Rf);
+    m.tx.clear();
+    let usb_before = m.usb_nkro.len() + m.usb_kb.len();
+    tap(&mut kb, &mut m, KEY_A.0, KEY_A.1);
+    assert_eq!(m.usb_nkro.len() + m.usb_kb.len(), usb_before, "key went to USB");
+    assert!(!m.reports().is_empty(), "key not sent over the radio");
+}
+
+/// A host that selected boot protocol (BIOS) only accepts 6KRO boot reports.
+/// Wireless forces report protocol; returning to USB must restore the host's
+/// choice, and the charging host's SET_PROTOCOL must not affect wireless.
+#[test]
+fn usb_protocol_survives_wireless_round_trip() {
+    let mut m = Mock::new();
+    let mut kb = boot(&mut m);
+    kb.usb_set_protocol(0);
+    assert_eq!(kb.keyboard_protocol, 0);
+
+    m.dev_pin = false;
+    m.nrf_saved = [LINK_BT_1, LINK_BT_1, LINK_BT_1];
+    run(&mut kb, &mut m, 1000);
+    assert_eq!(kb.driver, HostDriver::Rf);
+    assert_eq!(kb.keyboard_protocol, 1);
+    kb.usb_set_protocol(0);
+    assert_eq!(kb.keyboard_protocol, 1, "USB host changed the wireless protocol");
+
+    m.dev_pin = true;
+    run(&mut kb, &mut m, 1000);
+    assert_eq!(kb.driver, HostDriver::Usb);
+    assert_eq!(kb.keyboard_protocol, 0);
+    let (nkro_before, kb_before) = (m.usb_nkro.len(), m.usb_kb.len());
+    tap(&mut kb, &mut m, KEY_A.0, KEY_A.1);
+    assert_eq!(m.usb_nkro.len(), nkro_before, "NKRO report sent to a boot-protocol host");
+    assert!(m.usb_kb.len() > kb_before);
+}
+
+/// Rainbow wave walks a 224-entry table and single-colour wave a 112-entry
+/// one with the same index; switching from rainbow at any point must not
+/// index past the shorter table (a panic hangs the firmware).
+#[test]
+fn side_wave_colour_switch_from_any_rainbow_position() {
+    for start in 0..crate::led::side_tables::FLOW_COLOUR_TAB_LEN as u8 {
+        let mut m = Mock::new();
+        let mut kb = boot(&mut m);
+        kb.side.side_mode = crate::led::side::SIDE_WAVE;
+        kb.side.side_rgb = 1;
+        kb.side.side_play_point = start;
+        kb.side_colour_control(&mut m, true);
+        assert_eq!(kb.side.side_rgb, 0);
+        for _ in 0..200 {
+            m.t += 5;
+            kb.m_side_led_show(&mut m);
+        }
+    }
+}

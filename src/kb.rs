@@ -179,6 +179,9 @@ pub struct Kb {
     pub nkro: bool,
     /// `keyboard_protocol` (1 = report protocol).
     pub keyboard_protocol: u8,
+    /// Protocol last selected by the USB host; wireless forces report
+    /// protocol, so this is restored when the USB driver is reinstalled.
+    pub usb_protocol: u8,
     pub layer_state: u32,
     pub default_layer_state: u32,
     /// QMK action engine state (see `action.rs`).
@@ -258,6 +261,7 @@ impl Kb {
             last_consumer_usage: 0,
             nkro: true,
             keyboard_protocol: 1,
+            usb_protocol: 1,
             layer_state: 0,
             default_layer_state: 1,
             act: crate::action::ActionState::new(),
@@ -329,8 +333,20 @@ impl Kb {
         }
     }
 
-    fn host_set_driver(&mut self, driver: HostDriver) {
+    pub(crate) fn host_set_driver(&mut self, driver: HostDriver) {
         self.driver = driver;
+        if driver == HostDriver::Usb {
+            self.keyboard_protocol = self.usb_protocol;
+        }
+    }
+
+    /// SET_PROTOCOL (or bus reset) from the USB host. Applies at once only
+    /// while the USB driver is installed; wireless keeps report protocol.
+    pub fn usb_set_protocol(&mut self, protocol: u8) {
+        self.usb_protocol = protocol;
+        if self.driver == HostDriver::Usb {
+            self.keyboard_protocol = protocol;
+        }
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -1024,6 +1040,9 @@ impl Kb {
     /// have selected the wireless driver.
     pub fn protocol_post_init(&mut self) {
         self.host_set_driver(HostDriver::Usb);
+        /* Keep host_mode in step so dev_sts_sync() reinstalls the RF driver
+           when the power-on dial scan picked a wireless link. */
+        self.host_mode = HOST_USB_TYPE;
     }
 
     /// `notify_usb_device_state_change_kb()`: USB bus reset or deconfigure
@@ -1043,6 +1062,7 @@ impl Kb {
         self.clear_keys();
         self.host_system_send(hal, 0);
         self.host_consumer_send(hal, 0);
+        self.mousekey_clear();
         self.rgb.suspended = false;
     }
 

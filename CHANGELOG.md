@@ -1,5 +1,14 @@
 # Changelog
 
+## v4.9.1 (2026-11-11)
+
+- **Wireless power-on after wired use sent keys to USB.** When the radio still remembered the USB link, the RF driver was never installed, so nothing typed wirelessly.
+- **Side-light colour key could hang the keyboard.** Leaving rainbow wave at certain animation positions indexed past the single-colour wave table.
+- **Settings storage is power-loss safe and wears far less.** Each settings page now has two flash slots (adds pages 60–61); an update goes to the other slot and is marked valid last. Writes are collected for 500 ms, so a VIA keymap or macro upload is one erase instead of ~70. Existing settings carry over. The linker now reserves the settings flash.
+- Side-LED updates made during an incremental I2C flush were lost until the next change.
+- USB: bus reset returns to report protocol; the host's protocol choice is restored after a wireless round trip; queued VIA commands are no longer dropped; mouse keys are cleared on resume (QMK `suspend_wakeup_init()`); bcdDevice is checked as BCD at build time.
+- Release workflow matches the changelog section exactly (`v4.1` no longer matches `v4.10`).
+
 ## v4.9.0 (2026-11-08)
 
 1:1 port of the C firmware (nuphy-air96-v2 v3.2.9). Each C module now has a

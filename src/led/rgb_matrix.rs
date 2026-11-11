@@ -1,7 +1,7 @@
 //! RGB matrix — 1:1 port of `quantum/rgb_matrix/rgb_matrix.c`, the effect
 //! runners and the 40 effects enabled in keyboard.json, plus the lib8tion
 //! math they use, as compiled for the C firmware (Cortex-M0: C lib8tion,
-//! FASTLED_SCALE8_FIXED off, no CIE curve, newlib `rand()`).
+//! FASTLED_SCALE8_FIXED off, CIE1931 curve, newlib `rand()`).
 //!
 //! Verified frame-for-frame against QMK's own code by tools/rgb_harness.
 //! Integer conversions mirror C: `as u8` / `as i8` truncate like C's implicit

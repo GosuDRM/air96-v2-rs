@@ -21,9 +21,14 @@ struct State {
     ep_in: Vec<(u8, Vec<u8>)>,
     in_complete: u16,
     stalled: bool,
+    /// Non-control OUT packets (endpoint index, data).
+    ep_out: VecDeque<(usize, Vec<u8>)>,
+    bus_reset: bool,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
+/// Tests driving the mock bus share STATE, so they run one at a time.
+static BUS: Mutex<()> = Mutex::new(());
 
 fn st<R>(f: impl FnOnce(&mut State) -> R) -> R {
     f(STATE.lock().unwrap().get_or_insert_with(State::default))
@@ -56,6 +61,10 @@ impl UsbBus for MockBus {
                     buf[..d.len()].copy_from_slice(&d);
                     return Ok(d.len());
                 }
+            } else if let Some(i) = s.ep_out.iter().position(|(e, _)| *e == ep.index()) {
+                let (_, d) = s.ep_out.remove(i).unwrap();
+                buf[..d.len()].copy_from_slice(&d);
+                return Ok(d.len());
             }
             Err(UsbError::WouldBlock)
         })
@@ -72,8 +81,11 @@ impl UsbBus for MockBus {
     fn resume(&self) {}
     fn poll(&self) -> PollResult {
         st(|s| {
+            if core::mem::take(&mut s.bus_reset) {
+                return PollResult::Reset;
+            }
             let ep_setup = s.setup.is_some() as u16;
-            let ep_out = (!s.ep0_out.is_empty()) as u16;
+            let ep_out = (!s.ep0_out.is_empty()) as u16 | s.ep_out.iter().fold(0, |m, (e, _)| m | 1 << e);
             let ep_in_complete = core::mem::take(&mut s.in_complete);
             if ep_setup | ep_out | ep_in_complete == 0 {
                 PollResult::None
@@ -123,6 +135,7 @@ fn hex(b: &[u8]) -> String {
 
 #[test]
 fn usb_descriptors_match_c_via_build() {
+    let _bus = BUS.lock().unwrap_or_else(|e| e.into_inner());
     let alloc = UsbBusAllocator::new(MockBus);
     let (mut dev, mut ifs) = usb_hid::build(&alloc, now);
 
@@ -198,8 +211,46 @@ fn usb_hid_requests_follow_qmk() {
 
 #[test]
 fn device_version_is_bcd() {
+    // Hosts show bcdDevice as BCD: every nibble must be a decimal digit and
+    // read back as the crate version (MM.m.p).
     let v = usb_hid::device_version();
+    let d: Vec<u16> = (0..4).rev().map(|i| (v >> (i * 4)) & 0xF).collect();
+    assert!(d.iter().all(|&n| n <= 9), "bcdDevice {v:#06x} is not BCD");
     let s = env!("CARGO_PKG_VERSION");
     let p: Vec<u16> = s.split('.').map(|x| x.parse().unwrap()).collect();
-    assert_eq!(v, (p[0] << 8) | (p[1] << 4) | p[2]);
+    assert_eq!([d[0] * 10 + d[1], d[2], d[3]], [p[0], p[1], p[2]]);
+}
+
+/// A BIOS can leave the keyboard in boot protocol; after a bus reset (e.g. the
+/// OS re-enumerating) it must report protocol again (HID 1.11 7.2.6), or the
+/// OS would keep getting boot reports and lose NKRO.
+#[test]
+fn bus_reset_restores_report_protocol() {
+    let _bus = BUS.lock().unwrap_or_else(|e| e.into_inner());
+    let alloc = UsbBusAllocator::new(MockBus);
+    let (mut dev, mut ifs) = usb_hid::build(&alloc, now);
+    let get_protocol = [0xA1, 0x03, 0, 0, 0, 0, 1, 0];
+
+    control(&mut dev, &mut ifs, [0x21, 0x0B, 0, 0, 0, 0, 0, 0], &[]); // SET_PROTOCOL boot
+    assert_eq!(control(&mut dev, &mut ifs, get_protocol, &[]).0, [0]);
+
+    st(|s| s.bus_reset = true);
+    dev.poll(&mut ifs.as_classes());
+    assert_eq!(control(&mut dev, &mut ifs, get_protocol, &[]).0, [1]);
+}
+
+/// VIA commands that arrive before the previous one is handled are queued
+/// (QMK buffers raw OUT reports), not dropped.
+#[test]
+fn raw_out_reports_are_queued() {
+    let _bus = BUS.lock().unwrap_or_else(|e| e.into_inner());
+    let alloc = UsbBusAllocator::new(MockBus);
+    let (mut dev, mut ifs) = usb_hid::build(&alloc, now);
+    for cmd in [1u8, 2] {
+        st(|s| s.ep_out.push_back((3, [cmd; 32].to_vec())));
+        dev.poll(&mut ifs.as_classes());
+    }
+    assert_eq!(ifs.raw.take_out_report().map(|r| r[0]), Some(1));
+    assert_eq!(ifs.raw.take_out_report().map(|r| r[0]), Some(2));
+    assert_eq!(ifs.raw.take_out_report(), None);
 }

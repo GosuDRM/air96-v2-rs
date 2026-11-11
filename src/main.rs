@@ -167,11 +167,22 @@ struct Board<I> {
     /// the CPU, so it waits for an idle loop iteration).
     pending_cfg: Option<UserConfig>,
     flush_phase: u8,
+    /// Driver dirty flags captured with the PWM snapshot: changes made while
+    /// the snapshot is being written set `rgb.dirty*` again for the next flush.
+    flush_dirty: (bool, bool),
     pwm_buf1: [u8; 192],
     pwm_buf2: [u8; 192],
 }
 
 impl<I: _embedded_hal_blocking_i2c_Write> Board<I> {
+    /// Write deferred settings to flash before a reset.
+    fn persist(&mut self) {
+        if let Some(cfg) = self.pending_cfg.take() {
+            eeprom::save(&cfg);
+        }
+        eeprom::flush();
+    }
+
     /// `is31fl3733_flush_continue()`: one I2C write per call so scanning keeps
     /// up; returns true once both drivers' dirty buffers are written.
     #[inline(never)]
@@ -183,6 +194,9 @@ impl<I: _embedded_hal_blocking_i2c_Write> Board<I> {
             let (b1, b2) = rgb.build_pwm_buffers();
             self.pwm_buf1 = b1;
             self.pwm_buf2 = b2;
+            self.flush_dirty = (rgb.dirty1, rgb.dirty2);
+            rgb.dirty1 = false;
+            rgb.dirty2 = false;
             self.flush_phase = 1;
         }
         let chunk = |buf: &[u8; 192], part: usize| {
@@ -193,10 +207,9 @@ impl<I: _embedded_hal_blocking_i2c_Write> Board<I> {
         };
         match self.flush_phase {
             1 => {
-                if rgb.dirty1 {
+                if self.flush_dirty.0 {
                     let _ = self.i2c.write(DRIVER_ADDR_1, &[0xFE, 0xC5]);
                     let _ = self.i2c.write(DRIVER_ADDR_1, &[0xFD, 0x01]);
-                    rgb.dirty1 = false;
                     self.flush_phase = 2;
                 } else {
                     self.flush_phase = 5;
@@ -208,10 +221,9 @@ impl<I: _embedded_hal_blocking_i2c_Write> Board<I> {
                 self.flush_phase += 1;
             }
             5 => {
-                if rgb.dirty2 {
+                if self.flush_dirty.1 {
                     let _ = self.i2c.write(DRIVER_ADDR_2, &[0xFE, 0xC5]);
                     let _ = self.i2c.write(DRIVER_ADDR_2, &[0xFD, 0x01]);
-                    rgb.dirty2 = false;
                     self.flush_phase = 6;
                 } else {
                     self.flush_phase = 0;
@@ -368,10 +380,12 @@ impl<I: _embedded_hal_blocking_i2c_Write> Hal for Board<I> {
     }
 
     fn bootloader_jump(&mut self) {
+        self.persist();
         unsafe { Matrix::enter_bootloader() }
     }
 
     fn mcu_reset(&mut self) {
+        self.persist();
         cortex_m::peripheral::SCB::sys_reset();
     }
 }
@@ -538,6 +552,7 @@ fn main() -> ! {
         i2c,
         pending_cfg: None,
         flush_phase: 0,
+        flush_dirty: (false, false),
         pwm_buf1: [0; 192],
         pwm_buf2: [0; 192],
     };
@@ -573,7 +588,7 @@ fn main() -> ! {
             kb.notify_usb_device_state_change_kb(state);
         }
         if let Some(p) = with_usb(|u| u.take_protocol_change()) {
-            kb.keyboard_protocol = p;
+            kb.usb_set_protocol(p);
         }
         let (_, just_resumed) = with_usb(|u| u.take_suspend_edge());
         if just_resumed {
@@ -620,6 +635,7 @@ fn main() -> ! {
             if let Some(cfg) = board.pending_cfg.take() {
                 eeprom::save(&cfg);
             }
+            eeprom::task(millis());
         }
     }
 }

@@ -594,7 +594,7 @@ impl Kb {
         if self.dev_info.link_mode == LINK_USB {
             if self.host_mode != HOST_USB_TYPE {
                 self.host_mode = HOST_USB_TYPE;
-                self.driver = HostDriver::Usb;
+                self.host_set_driver(HostDriver::Usb);
                 self.m_break_all_key(hal);
             }
             self.rf_blink_cnt = 0;

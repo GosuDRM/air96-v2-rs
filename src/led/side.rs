@@ -204,6 +204,7 @@ impl Kb {
     /// `side_colour_control()`.
     pub fn side_colour_control(&mut self, hal: &mut impl Hal, dir: bool) {
         let s = &mut self.side;
+        let rgb_before = s.side_rgb;
         if s.side_mode != SIDE_WAVE && s.side_rgb != 0 {
             s.side_rgb = 0;
             s.side_colour = 0;
@@ -228,6 +229,11 @@ impl Kb {
             s.side_colour = 0;
         } else {
             s.side_colour -= 1;
+        }
+        /* Rainbow and single-colour wave index tables of different lengths
+           (224 vs 112) with side_play_point; restart it on a switch. */
+        if s.side_rgb != rgb_before {
+            s.side_play_point = 0;
         }
         self.user_config.ee_side_rgb = self.side.side_rgb;
         self.user_config.ee_side_colour = self.side.side_colour;

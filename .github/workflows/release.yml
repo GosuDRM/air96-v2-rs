@@ -32,7 +32,7 @@ jobs:
       run: |
         VERSION="${{ github.ref_name }}"
         awk -v ver="$VERSION" '
-          $0 ~ "^## " ver { found=1; print; next }
+          $1 == "##" && $2 == ver { found=1; print; next }
           /^## v/ { found=0 }
           found { print }
         ' CHANGELOG.md > /tmp/release_notes.md

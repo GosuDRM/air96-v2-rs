@@ -272,7 +272,8 @@ pub struct QmkHid<'a, B: UsbBus> {
     in_flight: Option<([u8; 32], u8)>,
     timed_out: bool,
     store: ReportStore,
-    rx: Option<[u8; 32]>,
+    /// RAW OUT reports not yet handled (QMK's buffered OUT queue).
+    rx: heapless::Deque<[u8; 32], IN_CAPACITY>,
     events: Events,
     now: fn() -> u32,
 }
@@ -305,7 +306,7 @@ impl<'a, B: UsbBus> QmkHid<'a, B> {
             in_flight: None,
             timed_out: false,
             store: ReportStore::new(kind),
-            rx: None,
+            rx: heapless::Deque::new(),
             events: Events { keyboard_protocol: 1, ..Default::default() },
             now,
         }
@@ -356,6 +357,11 @@ impl<'a, B: UsbBus> QmkHid<'a, B> {
         }
     }
 
+    /// Oldest OUT report not yet handled.
+    pub(crate) fn take_out_report(&mut self) -> Option<[u8; 32]> {
+        self.rx.pop_front()
+    }
+
     fn is_mine(&self, index: u16) -> bool {
         index == u8::from(self.if_num) as u16
     }
@@ -377,7 +383,12 @@ impl<'a, B: UsbBus> UsbClass<B> for QmkHid<'a, B> {
         self.reset_queue();
         self.in_flight = None;
         self.store.reset();
-        self.rx = None;
+        self.rx.clear();
+        // HID 1.11 7.2.6: a device returns to report protocol on bus reset.
+        if self.kind() == Kind::Keyboard {
+            self.events.keyboard_protocol = 1;
+            self.events.protocol = Some(1);
+        }
     }
 
     fn endpoint_in_complete(&mut self, addr: EndpointAddress) {
@@ -400,8 +411,8 @@ impl<'a, B: UsbBus> UsbClass<B> for QmkHid<'a, B> {
         }
         let mut buf = [0u8; 32];
         if let Ok(n) = ep.read(&mut buf) {
-            if n > 0 && self.rx.is_none() {
-                self.rx = Some(buf);
+            if n > 0 {
+                let _ = self.rx.push_back(buf);
             }
         }
     }
@@ -512,7 +523,7 @@ fn build_device<B: UsbBus>(bus: &UsbBusAllocator<B>) -> UsbDevice<'_, B> {
         .device_sub_class(0x00)
         .device_protocol(0x00)
         .max_packet_size_0(64)
-        .device_release(device_version())
+        .device_release(DEVICE_VERSION)
         .self_powered(false)
         .supports_remote_wakeup(true)
         .max_power(500)
@@ -711,7 +722,7 @@ impl<'a> UsbHid<'a> {
 
     /// RAW HID command received since the last call (`raw_hid_task()`).
     pub fn take_via_command(&mut self) -> Option<[u8; 32]> {
-        self.raw.rx.take()
+        self.raw.take_out_report()
     }
 
     /// QMK-equivalent device state changes since the last call.
@@ -773,6 +784,7 @@ impl<'a> UsbHid<'a> {
 }
 
 /// `DEVICE_VER` as BCD from the crate version (e.g. 4.9.0 → 0x0490).
+/// Like QMK's `bcd_version`, minor and patch must be single digits.
 pub const fn device_version() -> u16 {
     const V: &[u8] = env!("CARGO_PKG_VERSION").as_bytes();
     let mut parts = [0u16; 3];
@@ -788,5 +800,9 @@ pub const fn device_version() -> u16 {
         }
         i += 1;
     }
-    (parts[0] << 8) | ((parts[1] & 0xF) << 4) | (parts[2] & 0xF)
+    assert!(parts[0] < 100 && parts[1] < 10 && parts[2] < 10, "crate version does not fit bcdDevice (MM.m.p)");
+    ((parts[0] / 10) << 12) | ((parts[0] % 10) << 8) | (parts[1] << 4) | parts[2]
 }
+
+/// Evaluated at compile time, so an unencodable version fails the build.
+const DEVICE_VERSION: u16 = device_version();
